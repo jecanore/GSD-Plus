@@ -459,6 +459,13 @@ You're never locked in. The system adapts.
 | `/gsd:pause-work` | Create handoff when stopping mid-phase |
 | `/gsd:resume-work` | Restore from last session |
 
+### Automation
+
+| Command | What it does |
+|---------|--------------|
+| `/gsd:autopilot` | Fully automated milestone execution with beautiful TUI |
+| `/gsd:checkpoints` | Review and approve pending checkpoints from autopilot |
+
 ### Utilities
 
 | Command | What it does |
@@ -469,6 +476,7 @@ You're never locked in. The system adapts.
 | `/gsd:check-todos` | List pending todos |
 | `/gsd:debug [desc]` | Systematic debugging with persistent state |
 | `/gsd:quick` | Execute ad-hoc task with GSD guarantees |
+| `/gsd:extend` | Create custom GSD approaches (workflows, agents, templates) |
 
 <sup>¹ Contributed by reddit user OracleGreyBeard</sup>
 
