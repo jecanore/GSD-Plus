@@ -6,6 +6,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+- `gsd-verifier` agent now declares the Write tool, avoiding Bash heredoc fallbacks that could corrupt editor permission files when generating VERIFICATION.md reports.
+
 ## [1.18.0] - 2026-02-08
 
 ### Added
