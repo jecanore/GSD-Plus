@@ -119,6 +119,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const readline = require('readline');
 const { execSync } = require('child_process');
 
 // ─── Model Profile Table ─────────────────────────────────────────────────────
@@ -569,6 +570,58 @@ function formatSessionTable(sessions) {
            new Date(s.modified).toISOString().replace('T', ' ').substring(0, 19) + '\n';
   }
   return out;
+}
+
+// ─── Message Extraction Helpers ───────────────────────────────────────────────
+
+function isGenuineUserMessage(record) {
+  if (record.type !== 'user') return false;
+  if (record.userType !== 'external') return false;
+  if (record.isMeta === true) return false;
+  if (record.isSidechain === true) return false;
+  const content = record.message?.content;
+  if (typeof content !== 'string') return false;
+  if (content.length === 0) return false;
+  if (content.startsWith('<local-command')) return false;
+  if (content.startsWith('<command-')) return false;
+  if (content.startsWith('<task-notification')) return false;
+  if (content.startsWith('<local-command-stdout')) return false;
+  return true;
+}
+
+function truncateContent(content, maxLen = 2000) {
+  if (content.length <= maxLen) return content;
+  return content.substring(0, maxLen) + '... [truncated]';
+}
+
+async function streamExtractMessages(filePath, filterFn, maxMessages = 300) {
+  const rl = readline.createInterface({
+    input: fs.createReadStream(filePath),
+    crlfDelay: Infinity,
+    terminal: false,
+  });
+
+  const messages = [];
+  const sessionId = path.basename(filePath, '.jsonl');
+
+  for await (const line of rl) {
+    if (messages.length >= maxMessages) break;
+    let record;
+    try {
+      record = JSON.parse(line);
+    } catch {
+      continue; // skip malformed lines
+    }
+    if (!filterFn(record)) continue;
+    messages.push({
+      sessionId,
+      projectPath: record.cwd || null,
+      timestamp: record.timestamp || null,
+      content: truncateContent(record.message.content),
+    });
+  }
+
+  return messages;
 }
 
 // ─── Commands ─────────────────────────────────────────────────────────────────
@@ -4398,6 +4451,160 @@ async function cmdScanSessions(overridePath, options, raw) {
   }
 }
 
+async function cmdExtractMessages(projectArg, options, raw, overridePath) {
+  const sessionsDir = getSessionsDir(overridePath);
+  if (!sessionsDir) {
+    error('No Claude Code sessions found at ~/.claude/projects. Is Claude Code installed?');
+  }
+
+  // Read sessions directory, get list of project directories
+  let projectDirs;
+  try {
+    projectDirs = fs.readdirSync(sessionsDir).filter(entry => {
+      const fullPath = path.join(sessionsDir, entry);
+      try {
+        return fs.statSync(fullPath).isDirectory();
+      } catch {
+        return false;
+      }
+    });
+  } catch (err) {
+    error(`Cannot read sessions directory: ${err.message}`);
+  }
+
+  // Fuzzy match projectArg against directory names
+  let matchedDir = null;
+  let matchedName = null;
+
+  // Try exact match first
+  for (const dirName of projectDirs) {
+    if (dirName === projectArg) {
+      matchedDir = dirName;
+      break;
+    }
+  }
+
+  // Then case-insensitive substring match
+  if (!matchedDir) {
+    const lowerArg = projectArg.toLowerCase();
+    const matches = projectDirs.filter(d => d.toLowerCase().includes(lowerArg));
+    if (matches.length === 1) {
+      matchedDir = matches[0];
+    } else if (matches.length > 1) {
+      // Also try matching against project names from index
+      const exactNameMatches = [];
+      for (const dirName of matches) {
+        const indexData = readSessionIndex(path.join(sessionsDir, dirName));
+        const pName = getProjectName(dirName, indexData);
+        if (pName.toLowerCase() === lowerArg) {
+          exactNameMatches.push({ dirName, name: pName });
+        }
+      }
+      if (exactNameMatches.length === 1) {
+        matchedDir = exactNameMatches[0].dirName;
+        matchedName = exactNameMatches[0].name;
+      } else {
+        const names = matches.map(d => {
+          const idx = readSessionIndex(path.join(sessionsDir, d));
+          return `  - ${getProjectName(d, idx)} (${d})`;
+        });
+        error(`Multiple projects match "${projectArg}":\n${names.join('\n')}\nBe more specific.`);
+      }
+    }
+  }
+
+  if (!matchedDir) {
+    const available = projectDirs.map(d => {
+      const idx = readSessionIndex(path.join(sessionsDir, d));
+      return `  - ${getProjectName(d, idx)}`;
+    });
+    error(`No project matching "${projectArg}". Available projects:\n${available.join('\n')}`);
+  }
+
+  const projectPath = path.join(sessionsDir, matchedDir);
+  const indexData = readSessionIndex(projectPath);
+  const projectName = matchedName || getProjectName(matchedDir, indexData);
+
+  // Transparency note
+  process.stderr.write('Reading your session history (read-only, nothing is modified or sent anywhere)...\n');
+
+  // Get session files
+  let sessions = scanProjectDir(projectPath);
+
+  // Filter to specific session if requested
+  if (options.sessionId) {
+    sessions = sessions.filter(s => s.sessionId === options.sessionId);
+    if (sessions.length === 0) {
+      error(`Session "${options.sessionId}" not found in project "${projectName}".`);
+    }
+  }
+
+  // Cap number of sessions processed
+  if (options.limit && options.limit > 0) {
+    sessions = sessions.slice(0, options.limit);
+  }
+
+  // Create temp directory and output file
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-pipeline-'));
+  const outputPath = path.join(tmpDir, 'extracted-messages.jsonl');
+
+  // Track stats
+  let sessionsProcessed = 0;
+  let sessionsSkipped = 0;
+  let messagesExtracted = 0;
+  let messagesTruncated = 0;
+  const total = sessions.length;
+  const batchLimit = 300;
+
+  for (let i = 0; i < sessions.length; i++) {
+    if (messagesExtracted >= batchLimit) break;
+
+    const session = sessions[i];
+    process.stderr.write(`\rProcessing session ${i + 1}/${total}...`);
+
+    try {
+      const remaining = batchLimit - messagesExtracted;
+      const msgs = await streamExtractMessages(session.filePath, isGenuineUserMessage, remaining);
+      for (const msg of msgs) {
+        fs.appendFileSync(outputPath, JSON.stringify(msg) + '\n');
+        messagesExtracted++;
+        if (msg.content.endsWith('... [truncated]')) {
+          messagesTruncated++;
+        }
+      }
+      sessionsProcessed++;
+    } catch (err) {
+      sessionsSkipped++;
+      process.stderr.write(`\nWarning: Skipped session ${session.sessionId}: ${err.message}\n`);
+    }
+  }
+
+  // Clear progress line
+  process.stderr.write('\r' + ' '.repeat(60) + '\r');
+
+  const result = {
+    output_file: outputPath,
+    project: projectName,
+    sessions_processed: sessionsProcessed,
+    sessions_skipped: sessionsSkipped,
+    messages_extracted: messagesExtracted,
+    messages_truncated: messagesTruncated,
+  };
+
+  // Exit codes per locked decision
+  if (sessionsSkipped > 0 && sessionsProcessed > 0) {
+    // Partial success
+    process.stdout.write(JSON.stringify(result, null, 2));
+    process.exit(2);
+  } else if (sessionsProcessed === 0 && sessionsSkipped > 0) {
+    // Total failure
+    process.stdout.write(JSON.stringify(result, null, 2));
+    process.exit(1);
+  } else {
+    output(result, raw);
+  }
+}
+
 // ─── CLI Router ───────────────────────────────────────────────────────────────
 
 async function main() {
@@ -4784,6 +4991,21 @@ async function main() {
       const pathIdx = args.indexOf('--path');
       const sessionsPath = pathIdx !== -1 ? args[pathIdx + 1] : null;
       await cmdScanSessions(sessionsPath, { json: jsonFlag, verbose: verboseFlag }, raw);
+      break;
+    }
+
+    case 'extract-messages': {
+      const sessionIdx = args.indexOf('--session');
+      const sessionId = sessionIdx !== -1 ? args[sessionIdx + 1] : null;
+      const limitIdx = args.indexOf('--limit');
+      const limit = limitIdx !== -1 ? parseInt(args[limitIdx + 1], 10) : null;
+      const pathIdx = args.indexOf('--path');
+      const sessionsPath = pathIdx !== -1 ? args[pathIdx + 1] : null;
+      const projectArg = args[1];
+      if (!projectArg || projectArg.startsWith('--')) {
+        error('Usage: gsd-tools extract-messages <project> [--session <id>] [--limit N] [--path <dir>]\nRun scan-sessions first to see available projects.');
+      }
+      await cmdExtractMessages(projectArg, { sessionId, limit }, raw, sessionsPath);
       break;
     }
 
