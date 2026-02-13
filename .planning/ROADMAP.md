@@ -50,12 +50,12 @@ Plans:
   3. Profile includes representative quotes from actual sessions linked to each dimension
   4. USER-PROFILE.md is written to `~/.claude/get-shit-done/USER-PROFILE.md` with all sections populated
   5. When user opts out of session analysis or has no sessions, questionnaire fallback presents 8 prompts and produces the same profile structure
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 02-01: TBD
-- [ ] 02-02: TBD
-- [ ] 02-03: TBD
+- [ ] 02-01-PLAN.md -- User-profiling reference document, gsd-user-profiler agent definition, model profiles update
+- [ ] 02-02-PLAN.md -- profile-sample subcommand, user-profile template, write-profile subcommand
+- [ ] 02-03-PLAN.md -- Questionnaire fallback subcommand, tests for all Phase 2 gsd-tools functionality
 
 ### Phase 3: Profile Activation
 **Goal**: Developer can run a single command to generate their profile and produce Claude-discoverable artifacts that affect future sessions
