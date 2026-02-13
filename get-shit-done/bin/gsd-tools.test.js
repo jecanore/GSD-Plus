@@ -2031,3 +2031,326 @@ describe('scaffold command', () => {
     assert.strictEqual(output.reason, 'already_exists');
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// scan-sessions command
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('scan-sessions command', () => {
+  let tmpDir;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'gsd-scan-test-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function createMockProject(projectName, sessionCount) {
+    const projectDir = path.join(tmpDir, projectName);
+    fs.mkdirSync(projectDir, { recursive: true });
+    for (let i = 0; i < sessionCount; i++) {
+      const sessionId = `session-${i}-${Date.now()}`;
+      const content = JSON.stringify({ type: 'user', message: { content: `msg ${i}` } }) + '\n';
+      fs.writeFileSync(path.join(projectDir, `${sessionId}.jsonl`), content);
+    }
+    return projectDir;
+  }
+
+  test('returns project list with metadata', () => {
+    createMockProject('my-project', 2);
+
+    const result = runGsdTools(`scan-sessions --json --path ${tmpDir}`);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    const output = JSON.parse(result.output);
+    assert.ok(Array.isArray(output), 'output should be an array');
+    assert.strictEqual(output.length, 1, 'should have 1 project');
+    assert.strictEqual(output[0].sessionCount, 2, 'should have 2 sessions');
+  });
+
+  test('handles missing sessions directory gracefully', () => {
+    const result = runGsdTools('scan-sessions --path /tmp/nonexistent-gsd-test-dir-12345');
+    assert.ok(!result.success, 'should fail');
+    assert.ok(
+      result.error.includes('No Claude Code sessions found'),
+      'error should mention missing sessions'
+    );
+  });
+
+  test('discovers sessions without sessions-index.json', () => {
+    createMockProject('no-index-project', 3);
+
+    const result = runGsdTools(`scan-sessions --json --path ${tmpDir}`);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    const output = JSON.parse(result.output);
+    assert.strictEqual(output[0].sessionCount, 3, 'should discover 3 sessions from filesystem');
+  });
+
+  test('enriches metadata from sessions-index.json when present', () => {
+    const projectDir = createMockProject('indexed-project', 1);
+    const sessions = fs.readdirSync(projectDir).filter(f => f.endsWith('.jsonl'));
+    const sessionId = sessions[0].replace('.jsonl', '');
+
+    const indexData = {
+      originalPath: '/Users/dev/my-cool-project',
+      entries: [{
+        sessionId,
+        summary: 'Test session',
+        messageCount: 5,
+      }],
+    };
+    fs.writeFileSync(path.join(projectDir, 'sessions-index.json'), JSON.stringify(indexData));
+
+    const result = runGsdTools(`scan-sessions --json --path ${tmpDir}`);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    const output = JSON.parse(result.output);
+    assert.strictEqual(output[0].name, 'my-cool-project', 'should use originalPath for project name');
+  });
+
+  test('verbose mode lists individual sessions', () => {
+    createMockProject('verbose-project', 3);
+
+    const result = runGsdTools(`scan-sessions --verbose --json --path ${tmpDir}`);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    const output = JSON.parse(result.output);
+    assert.ok(output[0].sessions, 'should include sessions array');
+    assert.strictEqual(output[0].sessions.length, 3, 'should list 3 sessions');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// extract-messages command
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('extract-messages command', () => {
+  let tmpDir;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'gsd-extract-test-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function createTestSession(messages) {
+    return messages.map(m => JSON.stringify(m)).join('\n') + '\n';
+  }
+
+  function createMockProjectWithContent(projectName, content) {
+    const projectDir = path.join(tmpDir, projectName);
+    fs.mkdirSync(projectDir, { recursive: true });
+    const sessionId = `test-session-${Date.now()}`;
+    fs.writeFileSync(path.join(projectDir, `${sessionId}.jsonl`), content);
+    return { projectDir, sessionId };
+  }
+
+  test('extracts only genuine user messages', () => {
+    const content = createTestSession([
+      { type: 'user', userType: 'external', message: { content: 'Hello world' } },
+      { type: 'assistant', message: { content: 'Hi there' } },
+      { type: 'user', userType: 'external', isMeta: true, message: { content: 'meta message' } },
+      { type: 'user', userType: 'external', message: { content: ['array', 'content'] } },
+      { type: 'user', userType: 'external', message: { content: '<local-command some cmd' } },
+      { type: 'user', userType: 'external', message: { content: '<command-run something' } },
+      { type: 'user', userType: 'external', message: { content: '<task-notification task1' } },
+      { type: 'user', userType: 'external', isSidechain: true, message: { content: 'sidechain msg' } },
+      { type: 'user', userType: 'internal', message: { content: 'internal msg' } },
+      { type: 'user', userType: 'external', message: { content: 'Second real message' } },
+    ]);
+    createMockProjectWithContent('test-project', content);
+
+    const result = runGsdTools(`extract-messages test-project --path ${tmpDir}`);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    const output = JSON.parse(result.output);
+    assert.strictEqual(output.messages_extracted, 2, 'should extract only 2 genuine messages');
+
+    // Read the output file and verify contents
+    const lines = fs.readFileSync(output.output_file, 'utf-8').trim().split('\n');
+    const msgs = lines.map(l => JSON.parse(l));
+    assert.strictEqual(msgs[0].content, 'Hello world', 'first message should be genuine user message');
+    assert.strictEqual(msgs[1].content, 'Second real message', 'second message should be genuine user message');
+  });
+
+  test('truncates messages over 2000 chars', () => {
+    const longContent = 'x'.repeat(3000);
+    const content = createTestSession([
+      { type: 'user', userType: 'external', message: { content: longContent } },
+    ]);
+    createMockProjectWithContent('trunc-project', content);
+
+    const result = runGsdTools(`extract-messages trunc-project --path ${tmpDir}`);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    const output = JSON.parse(result.output);
+    assert.strictEqual(output.messages_truncated, 1, 'should report 1 truncated message');
+
+    const lines = fs.readFileSync(output.output_file, 'utf-8').trim().split('\n');
+    const msg = JSON.parse(lines[0]);
+    assert.ok(msg.content.endsWith('... [truncated]'), 'should end with truncation marker');
+    assert.ok(msg.content.length <= 2015, 'truncated content should not exceed 2015 chars');
+  });
+
+  test('limits batch to 300 messages', () => {
+    const messages = [];
+    for (let i = 0; i < 350; i++) {
+      messages.push({ type: 'user', userType: 'external', message: { content: `Message ${i}` } });
+    }
+    const content = createTestSession(messages);
+    createMockProjectWithContent('batch-project', content);
+
+    const result = runGsdTools(`extract-messages batch-project --path ${tmpDir}`);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    const output = JSON.parse(result.output);
+    assert.ok(output.messages_extracted <= 300, `should extract at most 300 messages, got ${output.messages_extracted}`);
+  });
+
+  test('skips corrupted files and continues', () => {
+    const projectDir = path.join(tmpDir, 'mixed-project');
+    fs.mkdirSync(projectDir, { recursive: true });
+
+    // Valid session
+    const validContent = createTestSession([
+      { type: 'user', userType: 'external', message: { content: 'Valid message' } },
+    ]);
+    fs.writeFileSync(path.join(projectDir, 'valid-session.jsonl'), validContent);
+
+    // Corrupted session (just garbage data - but this gets parsed line-by-line, so
+    // malformed lines are skipped, not the whole file. We need to trigger a read error.)
+    // Actually the file-level error handling catches fs errors. Let's test with
+    // a valid file that has only garbage lines - it should just produce 0 messages.
+    const garbageContent = 'not json at all\n{{broken\n[invalid\n';
+    fs.writeFileSync(path.join(projectDir, 'garbage-session.jsonl'), garbageContent);
+
+    const result = runGsdTools(`extract-messages mixed-project --path ${tmpDir}`);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    const output = JSON.parse(result.output);
+    assert.ok(output.messages_extracted >= 1, 'should extract messages from valid file');
+    assert.strictEqual(output.sessions_processed, 2, 'both sessions processed (garbage lines just skipped)');
+  });
+
+  test('returns error for unknown project', () => {
+    fs.mkdirSync(path.join(tmpDir, 'existing-project'), { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpDir, 'existing-project', 'session.jsonl'),
+      JSON.stringify({ type: 'user', userType: 'external', message: { content: 'hi' } }) + '\n'
+    );
+
+    const result = runGsdTools(`extract-messages nonexistent --path ${tmpDir}`);
+    assert.ok(!result.success, 'should fail for unknown project');
+    assert.ok(result.error.includes('No project matching'), 'error should mention no matching project');
+  });
+
+  test('--session flag targets single session', () => {
+    const projectDir = path.join(tmpDir, 'multi-session');
+    fs.mkdirSync(projectDir, { recursive: true });
+
+    fs.writeFileSync(
+      path.join(projectDir, 'session-aaa.jsonl'),
+      createTestSession([{ type: 'user', userType: 'external', message: { content: 'from aaa' } }])
+    );
+    fs.writeFileSync(
+      path.join(projectDir, 'session-bbb.jsonl'),
+      createTestSession([{ type: 'user', userType: 'external', message: { content: 'from bbb' } }])
+    );
+
+    const result = runGsdTools(`extract-messages multi-session --session session-aaa --path ${tmpDir}`);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    const output = JSON.parse(result.output);
+    assert.strictEqual(output.sessions_processed, 1, 'should process only 1 session');
+
+    const lines = fs.readFileSync(output.output_file, 'utf-8').trim().split('\n');
+    const msg = JSON.parse(lines[0]);
+    assert.strictEqual(msg.content, 'from aaa', 'should only contain messages from targeted session');
+    assert.strictEqual(msg.sessionId, 'session-aaa', 'sessionId should match targeted session');
+  });
+
+  test('--limit flag caps sessions processed', () => {
+    const projectDir = path.join(tmpDir, 'many-sessions');
+    fs.mkdirSync(projectDir, { recursive: true });
+
+    for (let i = 0; i < 5; i++) {
+      fs.writeFileSync(
+        path.join(projectDir, `sess-${i}.jsonl`),
+        createTestSession([{ type: 'user', userType: 'external', message: { content: `msg ${i}` } }])
+      );
+    }
+
+    const result = runGsdTools(`extract-messages many-sessions --limit 2 --path ${tmpDir}`);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    const output = JSON.parse(result.output);
+    assert.ok(output.sessions_processed <= 2, `should process at most 2 sessions, got ${output.sessions_processed}`);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// loadConfig extension
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('loadConfig extension', () => {
+  let tmpDir;
+
+  beforeEach(() => {
+    tmpDir = createTempProject();
+  });
+
+  afterEach(() => {
+    cleanup(tmpDir);
+  });
+
+  test('returns preferences and profile with defaults when missing from config', () => {
+    // Create config.json without preferences/profile keys
+    fs.writeFileSync(
+      path.join(tmpDir, '.planning', 'config.json'),
+      JSON.stringify({ model_profile: 'balanced' })
+    );
+
+    // Use state load to test loadConfig indirectly
+    fs.writeFileSync(
+      path.join(tmpDir, '.planning', 'STATE.md'),
+      '# State\n\n**Current Phase:** 01\n'
+    );
+
+    const result = runGsdTools('state load', tmpDir);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    const output = JSON.parse(result.output);
+    assert.strictEqual(output.config.model_profile, 'balanced', 'model_profile should load');
+    // preferences and profile should be present with defaults
+    assert.deepStrictEqual(output.config.preferences, {}, 'preferences should default to empty object');
+    assert.deepStrictEqual(output.config.profile, { path: null, generated: null }, 'profile should have defaults');
+  });
+
+  test('returns preferences and profile from config when present', () => {
+    fs.writeFileSync(
+      path.join(tmpDir, '.planning', 'config.json'),
+      JSON.stringify({
+        model_profile: 'quality',
+        preferences: { verbose: true, theme: 'dark' },
+        profile: { path: '/test/profile', generated: '2025-01-01' },
+      })
+    );
+
+    fs.writeFileSync(
+      path.join(tmpDir, '.planning', 'STATE.md'),
+      '# State\n\n**Current Phase:** 01\n'
+    );
+
+    const result = runGsdTools('state load', tmpDir);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    const output = JSON.parse(result.output);
+    assert.deepStrictEqual(output.config.preferences, { verbose: true, theme: 'dark' }, 'preferences should be loaded from config');
+    assert.deepStrictEqual(output.config.profile, { path: '/test/profile', generated: '2025-01-01' }, 'profile should be loaded from config');
+  });
+});
