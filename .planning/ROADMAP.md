@@ -34,12 +34,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Extracted output contains only user messages (type=user, userType=external) with no assistant, progress, or meta records
   4. Session discovery works both with sessions-index.json present and when index is missing (fallback to directory scan)
   5. Config template loads cleanly with new `preferences` and `profile` keys, and existing config.json files without these keys still load via backward-compatible defaults
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 01-01: TBD
-- [ ] 01-02: TBD
-- [ ] 01-03: TBD
+- [ ] 01-01-PLAN.md -- Session discovery infrastructure, helpers, scan-sessions command, loadConfig extension
+- [ ] 01-02-PLAN.md -- Message extraction pipeline, extract-messages command, tests for all Phase 1 functionality
 
 ### Phase 2: Profiling Engine
 **Goal**: Developer's behavioral patterns are analyzed into an evidence-backed profile with calibrated confidence across 8 dimensions
@@ -176,7 +175,7 @@ Parallel opportunities: {4, 5, 6, 7} can overlap after Phase 3 completes (Phase 
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Session Data Pipeline | 0/3 | Not started | - |
+| 1. Session Data Pipeline | 0/2 | Planned | - |
 | 2. Profiling Engine | 0/3 | Not started | - |
 | 3. Profile Activation | 0/3 | Not started | - |
 | 4. CLAUDE.md Generation | 0/3 | Not started | - |
