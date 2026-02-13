@@ -118,6 +118,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const { execSync } = require('child_process');
 
 // ─── Model Profile Table ─────────────────────────────────────────────────────
@@ -168,6 +169,8 @@ function loadConfig(cwd) {
     verifier: true,
     parallelization: true,
     brave_search: false,
+    preferences: {},
+    profile: { path: null, generated: null },
   };
 
   try {
@@ -201,6 +204,8 @@ function loadConfig(cwd) {
       verifier: get('verifier', { section: 'workflow', field: 'verifier' }) ?? defaults.verifier,
       parallelization,
       brave_search: get('brave_search') ?? defaults.brave_search,
+      preferences: get('preferences') ?? defaults.preferences,
+      profile: get('profile') ?? defaults.profile,
     };
   } catch {
     return defaults;
@@ -475,6 +480,95 @@ function output(result, raw, rawValue) {
 function error(message) {
   process.stderr.write('Error: ' + message + '\n');
   process.exit(1);
+}
+
+// ─── Session Discovery Helpers ────────────────────────────────────────────────
+
+function getSessionsDir(overridePath) {
+  const dir = overridePath || path.join(os.homedir(), '.claude', 'projects');
+  if (!fs.existsSync(dir)) return null;
+  return dir;
+}
+
+function scanProjectDir(projectDirPath) {
+  const entries = fs.readdirSync(projectDirPath);
+  const sessions = [];
+
+  for (const entry of entries) {
+    if (!entry.endsWith('.jsonl')) continue;
+    const sessionId = entry.replace('.jsonl', '');
+    const filePath = path.join(projectDirPath, entry);
+    const stat = fs.statSync(filePath);
+
+    sessions.push({
+      sessionId,
+      filePath,
+      size: stat.size,
+      modified: stat.mtime,
+    });
+  }
+
+  // Sort by modified descending (most recent first)
+  sessions.sort((a, b) => b.modified - a.modified);
+  return sessions;
+}
+
+function readSessionIndex(projectDirPath) {
+  try {
+    const indexPath = path.join(projectDirPath, 'sessions-index.json');
+    const raw = fs.readFileSync(indexPath, 'utf-8');
+    const parsed = JSON.parse(raw);
+    const entries = new Map();
+    for (const entry of (parsed.entries || [])) {
+      if (entry.sessionId) {
+        entries.set(entry.sessionId, entry);
+      }
+    }
+    return { originalPath: parsed.originalPath || null, entries };
+  } catch {
+    return { originalPath: null, entries: new Map() };
+  }
+}
+
+function getProjectName(projectDirName, indexData, firstRecordCwd) {
+  if (indexData && indexData.originalPath) {
+    return path.basename(indexData.originalPath);
+  }
+  if (firstRecordCwd) {
+    return path.basename(firstRecordCwd);
+  }
+  return projectDirName;
+}
+
+function formatBytes(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1048576) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1073741824) return `${(bytes / 1048576).toFixed(1)} MB`;
+  return `${(bytes / 1073741824).toFixed(1)} GB`;
+}
+
+function formatProjectTable(projects) {
+  let out = '';
+  out += 'Project'.padEnd(35) + 'Sessions'.padEnd(10) + 'Size'.padEnd(10) + 'Last Active\n';
+  out += '-'.repeat(75) + '\n';
+  for (const p of projects) {
+    const name = p.name.length > 33 ? p.name.substring(0, 30) + '...' : p.name;
+    out += name.padEnd(35) + String(p.sessionCount).padEnd(10) +
+           p.totalSizeHuman.padEnd(10) + p.lastActive + '\n';
+  }
+  return out;
+}
+
+function formatSessionTable(sessions) {
+  let out = '';
+  out += '  Session ID'.padEnd(42) + 'Size'.padEnd(10) + 'Modified\n';
+  out += '  ' + '-'.repeat(70) + '\n';
+  for (const s of sessions) {
+    const id = s.sessionId.length > 38 ? s.sessionId.substring(0, 35) + '...' : s.sessionId;
+    out += '  ' + id.padEnd(40) + formatBytes(s.size).padEnd(10) +
+           new Date(s.modified).toISOString().replace('T', ' ').substring(0, 19) + '\n';
+  }
+  return out;
 }
 
 // ─── Commands ─────────────────────────────────────────────────────────────────
