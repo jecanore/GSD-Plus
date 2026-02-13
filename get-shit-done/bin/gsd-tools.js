@@ -4303,6 +4303,101 @@ function cmdInitProgress(cwd, includes, raw) {
   output(result, raw);
 }
 
+// ─── Session Pipeline Commands ────────────────────────────────────────────────
+
+async function cmdScanSessions(overridePath, options, raw) {
+  const sessionsDir = getSessionsDir(overridePath);
+  if (!sessionsDir) {
+    error('No Claude Code sessions found at ~/.claude/projects. Is Claude Code installed?');
+  }
+
+  // Transparency note
+  process.stderr.write('Reading your session history (read-only, nothing is modified or sent anywhere)...\n');
+
+  let projectDirs;
+  try {
+    projectDirs = fs.readdirSync(sessionsDir).filter(entry => {
+      const fullPath = path.join(sessionsDir, entry);
+      try {
+        return fs.statSync(fullPath).isDirectory();
+      } catch {
+        return false;
+      }
+    });
+  } catch (err) {
+    error(`Cannot read sessions directory: ${err.message}`);
+  }
+
+  const projects = [];
+
+  for (const dirName of projectDirs) {
+    const projectPath = path.join(sessionsDir, dirName);
+    const sessions = scanProjectDir(projectPath);
+    if (sessions.length === 0) continue;
+
+    const indexData = readSessionIndex(projectPath);
+    const projectName = getProjectName(dirName, indexData);
+
+    if (indexData.entries.size === 0 && !options.json) {
+      process.stderr.write(`Index not found for ${projectName}, scanning directory...\n`);
+    }
+
+    const totalSize = sessions.reduce((sum, s) => sum + s.size, 0);
+    const lastActive = sessions[0].modified.toISOString();
+    const oldest = sessions[sessions.length - 1].modified.toISOString();
+    const newest = sessions[0].modified.toISOString();
+
+    const project = {
+      name: projectName,
+      directory: dirName,
+      sessionCount: sessions.length,
+      totalSize,
+      totalSizeHuman: formatBytes(totalSize),
+      lastActive: lastActive.replace('T', ' ').substring(0, 19),
+      dateRange: { first: oldest, last: newest },
+    };
+
+    if (options.verbose) {
+      project.sessions = sessions.map(s => {
+        const indexed = indexData.entries.get(s.sessionId);
+        const session = {
+          sessionId: s.sessionId,
+          size: s.size,
+          sizeHuman: formatBytes(s.size),
+          modified: s.modified.toISOString(),
+        };
+        if (indexed) {
+          if (indexed.summary) session.summary = indexed.summary;
+          if (indexed.messageCount !== undefined) session.messageCount = indexed.messageCount;
+          if (indexed.created) session.created = indexed.created;
+        }
+        return session;
+      });
+    }
+
+    projects.push(project);
+  }
+
+  // Sort by last active descending
+  projects.sort((a, b) => b.dateRange.last.localeCompare(a.dateRange.last));
+
+  if (options.json || raw) {
+    output(projects, raw);
+  } else {
+    process.stdout.write('\n' + formatProjectTable(projects));
+    if (options.verbose) {
+      for (const p of projects) {
+        process.stdout.write(`\n  ${p.name} (${p.sessionCount} sessions):\n`);
+        if (p.sessions) {
+          process.stdout.write(formatSessionTable(p.sessions));
+        }
+      }
+    }
+    process.stdout.write(`\nTotal: ${projects.length} projects\n`);
+    process.exit(0);
+  }
+}
+
 // ─── CLI Router ───────────────────────────────────────────────────────────────
 
 async function main() {
@@ -4680,6 +4775,15 @@ async function main() {
         limit: limitIdx !== -1 ? parseInt(args[limitIdx + 1], 10) : 10,
         freshness: freshnessIdx !== -1 ? args[freshnessIdx + 1] : null,
       }, raw);
+      break;
+    }
+
+    case 'scan-sessions': {
+      const jsonFlag = args.includes('--json');
+      const verboseFlag = args.includes('--verbose');
+      const pathIdx = args.indexOf('--path');
+      const sessionsPath = pathIdx !== -1 ? args[pathIdx + 1] : null;
+      await cmdScanSessions(sessionsPath, { json: jsonFlag, verbose: verboseFlag }, raw);
       break;
     }
 
