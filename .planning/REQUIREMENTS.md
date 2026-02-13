@@ -101,54 +101,54 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| PIPE-01 | Pending | Pending |
-| PIPE-02 | Pending | Pending |
-| PIPE-03 | Pending | Pending |
-| PIPE-04 | Pending | Pending |
-| PIPE-05 | Pending | Pending |
-| PIPE-06 | Pending | Pending |
-| PROF-01 | Pending | Pending |
-| PROF-02 | Pending | Pending |
-| PROF-03 | Pending | Pending |
-| PROF-04 | Pending | Pending |
-| PROF-05 | Pending | Pending |
-| PROF-06 | Pending | Pending |
-| PROF-07 | Pending | Pending |
-| ACTV-01 | Pending | Pending |
-| ACTV-02 | Pending | Pending |
-| ACTV-03 | Pending | Pending |
-| ACTV-04 | Pending | Pending |
-| ACTV-05 | Pending | Pending |
-| ACTV-06 | Pending | Pending |
-| CLMD-01 | Pending | Pending |
-| CLMD-02 | Pending | Pending |
-| CLMD-03 | Pending | Pending |
-| CLMD-04 | Pending | Pending |
-| CLMD-05 | Pending | Pending |
-| CLMD-06 | Pending | Pending |
-| WKFL-01 | Pending | Pending |
-| WKFL-02 | Pending | Pending |
-| WKFL-03 | Pending | Pending |
-| WKFL-04 | Pending | Pending |
-| WKFL-05 | Pending | Pending |
-| WKFL-06 | Pending | Pending |
-| WKFL-07 | Pending | Pending |
-| WKFL-08 | Pending | Pending |
-| INTG-01 | Pending | Pending |
-| INTG-02 | Pending | Pending |
-| INTG-03 | Pending | Pending |
-| INTG-04 | Pending | Pending |
-| INTG-05 | Pending | Pending |
-| DOCS-01 | Pending | Pending |
-| DOCS-02 | Pending | Pending |
-| DOCS-03 | Pending | Pending |
-| DOCS-04 | Pending | Pending |
+| PIPE-01 | Phase 1 | Pending |
+| PIPE-02 | Phase 1 | Pending |
+| PIPE-03 | Phase 1 | Pending |
+| PIPE-04 | Phase 1 | Pending |
+| PIPE-05 | Phase 1 | Pending |
+| PIPE-06 | Phase 1 | Pending |
+| PROF-01 | Phase 2 | Pending |
+| PROF-02 | Phase 2 | Pending |
+| PROF-03 | Phase 2 | Pending |
+| PROF-04 | Phase 2 | Pending |
+| PROF-05 | Phase 2 | Pending |
+| PROF-06 | Phase 2 | Pending |
+| PROF-07 | Phase 2 | Pending |
+| ACTV-01 | Phase 3 | Pending |
+| ACTV-02 | Phase 3 | Pending |
+| ACTV-03 | Phase 3 | Pending |
+| ACTV-04 | Phase 3 | Pending |
+| ACTV-05 | Phase 3 | Pending |
+| ACTV-06 | Phase 3 | Pending |
+| CLMD-01 | Phase 4 | Pending |
+| CLMD-02 | Phase 4 | Pending |
+| CLMD-03 | Phase 4 | Pending |
+| CLMD-04 | Phase 4 | Pending |
+| CLMD-05 | Phase 4 | Pending |
+| CLMD-06 | Phase 4 | Pending |
+| WKFL-01 | Phase 6 | Pending |
+| WKFL-02 | Phase 6 | Pending |
+| WKFL-03 | Phase 5 | Pending |
+| WKFL-04 | Phase 5 | Pending |
+| WKFL-05 | Phase 7 | Pending |
+| WKFL-06 | Phase 7 | Pending |
+| WKFL-07 | Phase 7 | Pending |
+| WKFL-08 | Phase 5 | Pending |
+| INTG-01 | Phase 8 | Pending |
+| INTG-02 | Phase 8 | Pending |
+| INTG-03 | Phase 8 | Pending |
+| INTG-04 | Phase 8 | Pending |
+| INTG-05 | Phase 8 | Pending |
+| DOCS-01 | Phase 9 | Pending |
+| DOCS-02 | Phase 9 | Pending |
+| DOCS-03 | Phase 9 | Pending |
+| DOCS-04 | Phase 9 | Pending |
 
 **Coverage:**
 - v1 requirements: 42 total
-- Mapped to phases: 0
-- Unmapped: 42
+- Mapped to phases: 42
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-02-12*
-*Last updated: 2026-02-12 after initial definition*
+*Last updated: 2026-02-12 after roadmap creation*
