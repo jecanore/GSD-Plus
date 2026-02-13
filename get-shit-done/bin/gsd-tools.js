@@ -4361,7 +4361,8 @@ function cmdInitProgress(cwd, includes, raw) {
 async function cmdScanSessions(overridePath, options, raw) {
   const sessionsDir = getSessionsDir(overridePath);
   if (!sessionsDir) {
-    error('No Claude Code sessions found at ~/.claude/projects. Is Claude Code installed?');
+    const searchedPath = overridePath || '~/.claude/projects';
+    error(`No Claude Code sessions found at ${searchedPath}.${overridePath ? '' : ' Is Claude Code installed?'}`);
   }
 
   // Transparency note
@@ -4454,7 +4455,8 @@ async function cmdScanSessions(overridePath, options, raw) {
 async function cmdExtractMessages(projectArg, options, raw, overridePath) {
   const sessionsDir = getSessionsDir(overridePath);
   if (!sessionsDir) {
-    error('No Claude Code sessions found at ~/.claude/projects. Is Claude Code installed?');
+    const searchedPath = overridePath || '~/.claude/projects';
+    error(`No Claude Code sessions found at ${searchedPath}.${overridePath ? '' : ' Is Claude Code installed?'}`);
   }
 
   // Read sessions directory, get list of project directories
