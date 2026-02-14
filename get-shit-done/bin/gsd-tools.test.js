@@ -2354,3 +2354,426 @@ describe('loadConfig extension', () => {
     assert.deepStrictEqual(output.config.profile, { path: '/test/profile', generated: '2025-01-01' }, 'profile should be loaded from config');
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// profile-sample command
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('profile-sample', () => {
+  let tmpDir;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'gsd-profile-sample-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function createMockSession(messages) {
+    return messages.map(m => JSON.stringify(m)).join('\n') + '\n';
+  }
+
+  function createMockProject(projectName, sessionCount, messagesPerSession = 3) {
+    const projectDir = path.join(tmpDir, projectName);
+    fs.mkdirSync(projectDir, { recursive: true });
+    for (let s = 0; s < sessionCount; s++) {
+      const messages = [];
+      for (let m = 0; m < messagesPerSession; m++) {
+        messages.push({
+          type: 'user',
+          userType: 'external',
+          message: { role: 'user', content: `Message ${m} from session ${s} of ${projectName}` },
+          cwd: `/mock/${projectName}`,
+          timestamp: new Date(Date.now() - s * 86400000).toISOString(),
+        });
+      }
+      fs.writeFileSync(
+        path.join(projectDir, `session-${s}-${Date.now()}.jsonl`),
+        createMockSession(messages)
+      );
+    }
+    return projectDir;
+  }
+
+  test('produces JSONL output with project-proportional sampling', () => {
+    // Use --max-per-project 1 to force sampling across multiple projects
+    createMockProject('project-a', 5, 3);
+    createMockProject('project-b', 2, 3);
+    createMockProject('project-c', 1, 3);
+
+    const result = runGsdTools(`profile-sample --path ${tmpDir} --limit 10 --max-per-project 1 --raw`);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    const output = JSON.parse(result.output);
+    assert.ok(output.output_file, 'should have output_file');
+    assert.ok(output.projects_sampled >= 2, `should sample at least 2 projects, got ${output.projects_sampled}`);
+    assert.ok(output.messages_sampled <= 10, `should sample at most 10 messages, got ${output.messages_sampled}`);
+    assert.ok(output.messages_sampled > 0, 'should sample at least 1 message');
+
+    // Verify JSONL file exists and each line is valid JSON with projectName
+    const lines = fs.readFileSync(output.output_file, 'utf-8').trim().split('\n');
+    for (const line of lines) {
+      const msg = JSON.parse(line);
+      assert.ok(msg.projectName, 'each message should have projectName');
+      assert.ok(typeof msg.projectName === 'string', 'projectName should be a string');
+    }
+  });
+
+  test('caps messages per project', () => {
+    createMockProject('dominant-project', 20, 3);
+    createMockProject('small-project', 1, 3);
+
+    const result = runGsdTools(`profile-sample --path ${tmpDir} --limit 10 --raw`);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    const output = JSON.parse(result.output);
+    // With 2 projects and limit 10, per-project cap should be max(5, floor(10/2)) = 5
+    // So dominant project should not contribute all 10
+    const breakdown = output.project_breakdown;
+    if (breakdown.length === 2) {
+      const dominant = breakdown.find(b => b.project === 'dominant-project');
+      assert.ok(dominant, 'dominant project should be in breakdown');
+      assert.ok(dominant.messages < 10, `dominant project should not contribute all messages, got ${dominant.messages}`);
+    }
+  });
+
+  test('enriches messages with projectName field', () => {
+    createMockProject('named-project', 2, 2);
+
+    const result = runGsdTools(`profile-sample --path ${tmpDir} --limit 5 --raw`);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    const output = JSON.parse(result.output);
+    const lines = fs.readFileSync(output.output_file, 'utf-8').trim().split('\n');
+    for (const line of lines) {
+      const msg = JSON.parse(line);
+      assert.strictEqual(typeof msg.projectName, 'string', 'projectName should be a string');
+      assert.ok(msg.projectName.length > 0, 'projectName should not be empty');
+    }
+  });
+
+  test('truncates message content to maxChars', () => {
+    const projectDir = path.join(tmpDir, 'long-project');
+    fs.mkdirSync(projectDir, { recursive: true });
+    const longContent = 'x'.repeat(2000);
+    const session = createMockSession([{
+      type: 'user',
+      userType: 'external',
+      message: { role: 'user', content: longContent },
+      cwd: '/mock/long-project',
+      timestamp: new Date().toISOString(),
+    }]);
+    fs.writeFileSync(path.join(projectDir, 'session-long.jsonl'), session);
+
+    const result = runGsdTools(`profile-sample --path ${tmpDir} --limit 5 --max-chars 100 --raw`);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    const output = JSON.parse(result.output);
+    const lines = fs.readFileSync(output.output_file, 'utf-8').trim().split('\n');
+    assert.ok(lines.length > 0, 'should have at least 1 message');
+    const msg = JSON.parse(lines[0]);
+    // Content should be truncated: 100 chars + "... [truncated]" = ~115 max
+    assert.ok(msg.content.length <= 120, `content should be truncated, got length ${msg.content.length}`);
+  });
+
+  test('errors on nonexistent path', () => {
+    const result = runGsdTools('profile-sample --path /nonexistent/path/that/does/not/exist --raw');
+    assert.ok(!result.success, 'should fail for nonexistent path');
+    assert.ok(result.error.includes('No Claude Code sessions found'), `error should mention sessions, got: ${result.error}`);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// write-profile command
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('write-profile', () => {
+  let tmpDir;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'gsd-write-profile-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function createMockAnalysis(overrides = {}) {
+    const base = {
+      profile_version: '1.0',
+      analyzed_at: new Date().toISOString(),
+      data_source: 'session_analysis',
+      projects_list: ['TestProject'],
+      message_count: 50,
+      message_threshold: 'full',
+      sensitive_excluded: [],
+      dimensions: {
+        communication_style: {
+          rating: 'detailed-structured',
+          confidence: 'HIGH',
+          evidence_count: 15,
+          cross_project_consistent: true,
+          evidence: [
+            { signal: 'Uses markdown headers', quote: '## Context\nThe auth flow...', project: 'TestProject' }
+          ],
+          summary: 'Consistently provides structured context.',
+          claude_instruction: 'Match structured communication with headers and lists.',
+        },
+        decision_speed: {
+          rating: 'deliberate-informed',
+          confidence: 'MEDIUM',
+          evidence_count: 8,
+          cross_project_consistent: true,
+          evidence: [
+            { signal: 'Asks for comparison tables', quote: 'Can you compare these options?', project: 'TestProject' }
+          ],
+          summary: 'Prefers informed decision making with comparisons.',
+          claude_instruction: 'Present options with pros/cons tables.',
+        },
+        explanation_depth: {
+          rating: 'concise',
+          confidence: 'MEDIUM',
+          evidence_count: 7,
+          cross_project_consistent: true,
+          evidence: [
+            { signal: 'Brief acknowledgments', quote: 'Got it, thanks', project: 'TestProject' }
+          ],
+          summary: 'Prefers concise explanations.',
+          claude_instruction: 'Keep explanations brief.',
+        },
+        debugging_approach: {
+          rating: 'diagnostic',
+          confidence: 'HIGH',
+          evidence_count: 12,
+          cross_project_consistent: true,
+          evidence: [
+            { signal: 'Shares error context', quote: 'Getting this error when...', project: 'TestProject' }
+          ],
+          summary: 'Approaches debugging with diagnostic mindset.',
+          claude_instruction: 'Diagnose root cause before presenting fix.',
+        },
+        ux_philosophy: {
+          rating: 'pragmatic',
+          confidence: 'MEDIUM',
+          evidence_count: 6,
+          cross_project_consistent: true,
+          evidence: [
+            { signal: 'Basic usability focus', quote: 'Make it look clean', project: 'TestProject' }
+          ],
+          summary: 'Pragmatic UX approach.',
+          claude_instruction: 'Build clean, usable interfaces.',
+        },
+        vendor_philosophy: {
+          rating: 'conservative',
+          confidence: 'LOW',
+          evidence_count: 3,
+          cross_project_consistent: false,
+          evidence: [
+            { signal: 'Prefers established tools', quote: 'Lets use PostgreSQL', project: 'TestProject' }
+          ],
+          summary: 'Tends toward established tools.',
+          claude_instruction: 'Recommend well-established tools.',
+        },
+        frustration_triggers: {
+          rating: 'scope-creep',
+          confidence: 'MEDIUM',
+          evidence_count: 5,
+          cross_project_consistent: true,
+          evidence: [
+            { signal: 'Rejects additions', quote: 'I just asked for X not Y', project: 'TestProject' }
+          ],
+          summary: 'Frustrated by scope creep.',
+          claude_instruction: 'Do exactly what is asked, nothing more.',
+        },
+        learning_style: {
+          rating: 'self-directed',
+          confidence: 'MEDIUM',
+          evidence_count: 7,
+          cross_project_consistent: true,
+          evidence: [
+            { signal: 'Reads code directly', quote: 'Let me look at the source', project: 'TestProject' }
+          ],
+          summary: 'Self-directed learner.',
+          claude_instruction: 'Point to relevant code sections.',
+        },
+      },
+    };
+
+    // Apply overrides
+    if (overrides.data_source) base.data_source = overrides.data_source;
+    if (overrides.dimensions) {
+      for (const [key, val] of Object.entries(overrides.dimensions)) {
+        base.dimensions[key] = { ...base.dimensions[key], ...val };
+      }
+    }
+    return base;
+  }
+
+  test('renders analysis JSON into USER-PROFILE.md', () => {
+    const analysis = createMockAnalysis();
+    const inputPath = path.join(tmpDir, 'analysis.json');
+    const outputPath = path.join(tmpDir, 'USER-PROFILE.md');
+    fs.writeFileSync(inputPath, JSON.stringify(analysis));
+
+    const result = runGsdTools(`write-profile --input ${inputPath} --output ${outputPath} --raw`);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    const profile = fs.readFileSync(outputPath, 'utf-8');
+    assert.ok(profile.includes('Developer Profile'), 'should contain Developer Profile');
+    assert.ok(profile.includes('Communication Style'), 'should contain Communication Style header');
+    assert.ok(profile.includes('Decision Speed') || profile.includes('decision_speed'), 'should contain decision dimension');
+    assert.ok(profile.includes('detailed-structured'), 'should contain communication rating');
+    assert.ok(profile.includes('TestProject'), 'should mention the project');
+  });
+
+  test('applies sensitive content filter', () => {
+    const analysis = createMockAnalysis({
+      dimensions: {
+        communication_style: {
+          evidence: [
+            { signal: 'Has API key in message', quote: 'Use sk-test123456789012345678 for auth', project: 'TestProject' }
+          ],
+        },
+      },
+    });
+    const inputPath = path.join(tmpDir, 'analysis-sensitive.json');
+    const outputPath = path.join(tmpDir, 'PROFILE-SENSITIVE.md');
+    fs.writeFileSync(inputPath, JSON.stringify(analysis));
+
+    const result = runGsdTools(`write-profile --input ${inputPath} --output ${outputPath} --raw`);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    const profile = fs.readFileSync(outputPath, 'utf-8');
+    assert.ok(profile.includes('[REDACTED]'), 'should contain [REDACTED] for sensitive content');
+    assert.ok(!profile.includes('sk-test123456789012345678'), 'should not contain the API key');
+
+    // Verify stderr mentions redaction
+    const output = JSON.parse(result.output);
+    assert.ok(output.sensitive_redacted > 0, 'should report sensitive content was redacted');
+  });
+
+  test('creates output directory if missing', () => {
+    const analysis = createMockAnalysis();
+    const inputPath = path.join(tmpDir, 'analysis.json');
+    const outputPath = path.join(tmpDir, 'nested', 'deep', 'dir', 'USER-PROFILE.md');
+    fs.writeFileSync(inputPath, JSON.stringify(analysis));
+
+    const result = runGsdTools(`write-profile --input ${inputPath} --output ${outputPath} --raw`);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+    assert.ok(fs.existsSync(outputPath), 'output file should be created in nested directory');
+  });
+
+  test('errors when input file missing', () => {
+    const result = runGsdTools(`write-profile --input /nonexistent/analysis.json --output ${tmpDir}/out.md --raw`);
+    assert.ok(!result.success, 'should fail for missing input');
+    assert.ok(result.error.includes('not found') || result.error.includes('Analysis file'), `error should mention missing file, got: ${result.error}`);
+  });
+
+  test('handles questionnaire-sourced analysis identically', () => {
+    const analysis = createMockAnalysis({ data_source: 'questionnaire' });
+    analysis.projects_list = [];
+    analysis.message_count = 0;
+    const inputPath = path.join(tmpDir, 'questionnaire-analysis.json');
+    const outputPath = path.join(tmpDir, 'PROFILE-Q.md');
+    fs.writeFileSync(inputPath, JSON.stringify(analysis));
+
+    const result = runGsdTools(`write-profile --input ${inputPath} --output ${outputPath} --raw`);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    const profile = fs.readFileSync(outputPath, 'utf-8');
+    assert.ok(profile.includes('Developer Profile'), 'should contain Developer Profile');
+    assert.ok(profile.includes('questionnaire'), 'should mention questionnaire as source');
+    assert.ok(profile.includes('Communication Style'), 'should have dimension headers');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// profile-questionnaire command
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('profile-questionnaire', () => {
+  test('outputs questions in interactive mode when no answers provided', () => {
+    const result = runGsdTools('profile-questionnaire --raw');
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    const output = JSON.parse(result.output);
+    assert.strictEqual(output.mode, 'interactive', 'should be interactive mode');
+    assert.strictEqual(output.questions.length, 8, 'should have 8 questions');
+
+    for (const q of output.questions) {
+      assert.ok(q.dimension, 'each question should have dimension');
+      assert.ok(q.context, 'each question should have context');
+      assert.ok(q.question, 'each question should have question text');
+      assert.ok(Array.isArray(q.options), 'each question should have options array');
+      assert.strictEqual(q.options.length, 4, `each question should have 4 options, got ${q.options.length}`);
+    }
+  });
+
+  test('produces valid analysis JSON from answers', () => {
+    const result = runGsdTools('profile-questionnaire --answers "a,b,c,d,a,b,c,d" --raw');
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    const output = JSON.parse(result.output);
+    assert.strictEqual(output.profile_version, '1.0', 'should have profile_version 1.0');
+    assert.strictEqual(output.data_source, 'questionnaire', 'should have questionnaire data_source');
+    assert.strictEqual(Object.keys(output.dimensions).length, 8, 'should have 8 dimensions');
+
+    for (const [dimKey, dim] of Object.entries(output.dimensions)) {
+      assert.ok(dim.rating, `${dimKey} should have rating`);
+      assert.ok(dim.confidence === 'MEDIUM' || dim.confidence === 'LOW', `${dimKey} confidence should be MEDIUM or LOW, got ${dim.confidence}`);
+      assert.ok(dim.claude_instruction, `${dimKey} should have claude_instruction`);
+      assert.ok(dim.summary, `${dimKey} should have summary`);
+      assert.ok(Array.isArray(dim.evidence), `${dimKey} should have evidence array`);
+      assert.strictEqual(dim.evidence_count, 1, `${dimKey} evidence_count should be 1`);
+    }
+  });
+
+  test('assigns MEDIUM confidence for definitive answers', () => {
+    const result = runGsdTools('profile-questionnaire --answers "a,a,a,a,a,a,a,a" --raw');
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    const output = JSON.parse(result.output);
+    // All "a" options are definitive choices, none are ambiguous
+    for (const [dimKey, dim] of Object.entries(output.dimensions)) {
+      assert.strictEqual(dim.confidence, 'MEDIUM', `${dimKey} should have MEDIUM confidence for definitive answer`);
+    }
+  });
+
+  test('assigns LOW confidence for ambiguous "it varies" answers', () => {
+    // communication_style "d" is explicitly "It depends on the task" -- should be LOW
+    const result = runGsdTools('profile-questionnaire --answers "d,b,b,b,b,b,b,b" --raw');
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    const output = JSON.parse(result.output);
+    assert.strictEqual(output.dimensions.communication_style.confidence, 'LOW',
+      'communication_style with "d" (it depends) should have LOW confidence');
+    assert.strictEqual(output.dimensions.decision_speed.confidence, 'MEDIUM',
+      'decision_speed with "b" (definitive) should have MEDIUM confidence');
+  });
+
+  test('produces schema compatible with write-profile', () => {
+    // Run questionnaire to get analysis JSON
+    const qResult = runGsdTools('profile-questionnaire --answers "a,b,c,d,a,b,c,d" --raw');
+    assert.ok(qResult.success, `Questionnaire failed: ${qResult.error}`);
+
+    // Write questionnaire output to temp file
+    const tmpDir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'gsd-compat-'));
+    const inputPath = path.join(tmpDir, 'q-analysis.json');
+    const outputPath = path.join(tmpDir, 'USER-PROFILE.md');
+    fs.writeFileSync(inputPath, qResult.output);
+
+    // Run write-profile with questionnaire output as input
+    const wpResult = runGsdTools(`write-profile --input ${inputPath} --output ${outputPath} --raw`);
+    assert.ok(wpResult.success, `write-profile failed on questionnaire output: ${wpResult.error}`);
+
+    // Verify profile was written correctly
+    const profile = fs.readFileSync(outputPath, 'utf-8');
+    assert.ok(profile.includes('Developer Profile'), 'profile should contain Developer Profile header');
+    assert.ok(profile.includes('questionnaire'), 'profile should reference questionnaire as data source');
+    assert.ok(profile.includes('Communication Style'), 'profile should have dimension sections');
+
+    // Cleanup
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+});
