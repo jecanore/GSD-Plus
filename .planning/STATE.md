@@ -5,7 +5,7 @@
 See: .planning/PROJECT.md (updated 2026-02-12)
 
 **Core value:** Claude should know how a developer works so it doesn't start every conversation blind
-**Current focus:** Phase 2 - Profiling Engine
+**Current focus:** Phase 3 - Profile Activation
 
 ## Current Position
 
