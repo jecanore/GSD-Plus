@@ -5205,6 +5205,126 @@ function cmdProfileQuestionnaire(options, raw) {
   output(analysis, raw);
 }
 
+// ─── Artifact Generation ─────────────────────────────────────────────────────
+
+function cmdGenerateDevPreferences(cwd, options, raw) {
+  if (!options.analysis) {
+    error('--analysis <path> is required');
+  }
+
+  // Read and parse analysis JSON
+  let analysisPath = options.analysis;
+  if (!path.isAbsolute(analysisPath)) {
+    analysisPath = path.join(cwd, analysisPath);
+  }
+  if (!fs.existsSync(analysisPath)) {
+    error(`Analysis file not found: ${analysisPath}`);
+  }
+
+  let analysis;
+  try {
+    analysis = JSON.parse(fs.readFileSync(analysisPath, 'utf-8'));
+  } catch (err) {
+    error(`Failed to parse analysis JSON: ${err.message}`);
+  }
+
+  // Validate structure
+  if (!analysis.dimensions || typeof analysis.dimensions !== 'object') {
+    error('Analysis JSON must contain a "dimensions" object');
+  }
+
+  const DIMENSION_KEYS = [
+    'communication_style', 'decision_speed', 'explanation_depth',
+    'debugging_approach', 'ux_philosophy', 'vendor_philosophy',
+    'frustration_triggers', 'learning_style'
+  ];
+
+  const devPrefLabels = {
+    communication_style: 'Communication',
+    decision_speed: 'Decision Support',
+    explanation_depth: 'Explanations',
+    debugging_approach: 'Debugging',
+    ux_philosophy: 'UX Approach',
+    vendor_philosophy: 'Library & Tool Choices',
+    frustration_triggers: 'Boundaries',
+    learning_style: 'Learning Support',
+  };
+
+  // Read the dev-preferences template
+  const templatePath = path.join(__dirname, '..', 'templates', 'dev-preferences.md');
+  if (!fs.existsSync(templatePath)) {
+    error(`Template not found: ${templatePath}`);
+  }
+  let template = fs.readFileSync(templatePath, 'utf-8');
+
+  // Build behavioral directives block
+  const directiveLines = [];
+  const dimensionsIncluded = [];
+
+  for (const dimKey of DIMENSION_KEYS) {
+    const dim = analysis.dimensions[dimKey];
+    if (!dim) continue;
+
+    const label = devPrefLabels[dimKey] || dimKey;
+    const confidence = dim.confidence || 'UNSCORED';
+
+    // Use dim.claude_instruction if present; else fall back to CLAUDE_INSTRUCTIONS lookup
+    let instruction = dim.claude_instruction;
+    if (!instruction) {
+      const lookup = CLAUDE_INSTRUCTIONS[dimKey];
+      if (lookup && dim.rating && lookup[dim.rating]) {
+        instruction = lookup[dim.rating];
+      } else {
+        instruction = `Adapt to this developer's ${dimKey.replace(/_/g, ' ')} preference.`;
+      }
+    }
+
+    directiveLines.push(`### ${label}\n${instruction} (${confidence} confidence)\n`);
+    dimensionsIncluded.push(dimKey);
+  }
+
+  const directivesBlock = directiveLines.join('\n').trim();
+
+  // Replace template placeholders
+  template = template.replace(/\{\{behavioral_directives\}\}/g, directivesBlock);
+  template = template.replace(/\{\{generated_at\}\}/g, new Date().toISOString());
+  template = template.replace(/\{\{data_source\}\}/g, analysis.data_source || 'session_analysis');
+
+  // Build stack preferences
+  let stackBlock;
+  if (analysis.data_source === 'questionnaire') {
+    stackBlock = 'Stack preferences not available (questionnaire-only profile). Run `/gsd:profile-user --refresh` with session data to populate.';
+  } else if (options.stack) {
+    stackBlock = options.stack;
+  } else {
+    stackBlock = 'Stack preferences will be populated from session analysis.';
+  }
+  template = template.replace(/\{\{stack_preferences\}\}/g, stackBlock);
+
+  // Determine output path
+  let outputPath = options.output;
+  if (!outputPath) {
+    outputPath = path.join(os.homedir(), '.claude', 'commands', 'gsd', 'dev-preferences.md');
+  } else if (!path.isAbsolute(outputPath)) {
+    outputPath = path.join(cwd, outputPath);
+  }
+
+  // Ensure parent directory exists
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+
+  // Write rendered template
+  fs.writeFileSync(outputPath, template, 'utf-8');
+
+  const result = {
+    command_path: outputPath,
+    command_name: '/gsd:dev-preferences',
+    dimensions_included: dimensionsIncluded,
+    source: analysis.data_source || 'session_analysis',
+  };
+
+  output(result, raw);
+}
+
 // ─── CLI Router ───────────────────────────────────────────────────────────────
 
 async function main() {
@@ -5636,6 +5756,17 @@ async function main() {
       const answersIdx = args.indexOf('--answers');
       const answers = answersIdx !== -1 ? args[answersIdx + 1] : null;
       cmdProfileQuestionnaire({ answers }, raw);
+      break;
+    }
+
+    case 'generate-dev-preferences': {
+      const analysisIdx = args.indexOf('--analysis');
+      const analysisPath = analysisIdx !== -1 ? args[analysisIdx + 1] : null;
+      const outputIdx = args.indexOf('--output');
+      const outputPath = outputIdx !== -1 ? args[outputIdx + 1] : null;
+      const stackIdx = args.indexOf('--stack');
+      const stack = stackIdx !== -1 ? args[stackIdx + 1] : null;
+      cmdGenerateDevPreferences(cwd, { analysis: analysisPath, output: outputPath, stack }, raw);
       break;
     }
 
