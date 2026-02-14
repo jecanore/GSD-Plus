@@ -67,12 +67,12 @@ Plans:
   3. Running `/gsd:profile-user --refresh` rebuilds the profile even when one already exists
   4. `/dev-preferences` command file appears at `~/.claude/commands/dev-preferences.md` and is readable by Claude Code
   5. Artifact selection lets developer choose which outputs to generate (CLAUDE.md, /dev-preferences, global CLAUDE.md)
-**Plans**: TBD
+**Plans**: 3 plans
 
 Plans:
-- [ ] 03-01: TBD
-- [ ] 03-02: TBD
-- [ ] 03-03: TBD
+- [ ] 03-01-PLAN.md -- Command definition and orchestration workflow (/gsd:profile-user command + 10-step workflow)
+- [ ] 03-02-PLAN.md -- Artifact generation subcommands (generate-dev-preferences, generate-claude-profile, dev-preferences template)
+- [ ] 03-03-PLAN.md -- Tests for artifact generation subcommands (17 test cases)
 
 ### Phase 4: CLAUDE.md Generation
 **Goal**: Developer gets a project-specific CLAUDE.md populated from their profile and project artifacts, with safe update mechanisms that preserve manual customizations
@@ -177,7 +177,7 @@ Parallel opportunities: {4, 5, 6, 7} can overlap after Phase 3 completes (Phase 
 |-------|----------------|--------|-----------|
 | 1. Session Data Pipeline | 2/2 | ✓ Complete | 2026-02-13 |
 | 2. Profiling Engine | 3/3 | ✓ Complete | 2026-02-14 |
-| 3. Profile Activation | 0/3 | Not started | - |
+| 3. Profile Activation | 0/3 | Planned | - |
 | 4. CLAUDE.md Generation | 0/3 | Not started | - |
 | 5. Phase Brief Assembly | 0/2 | Not started | - |
 | 6. Advisor Mode | 0/2 | Not started | - |
