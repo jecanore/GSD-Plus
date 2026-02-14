@@ -10,28 +10,28 @@ See: .planning/PROJECT.md (updated 2026-02-12)
 ## Current Position
 
 Phase: 2 of 9 (Profiling Engine)
-Plan: 2 of 3 in current phase
-Status: In progress
-Last activity: 2026-02-14 -- Completed 02-02 (data sampling pipeline and profile rendering)
+Plan: 3 of 3 in current phase
+Status: Phase complete
+Last activity: 2026-02-14 -- Completed 02-03 (questionnaire fallback and Phase 2 test suites)
 
-Progress: [██░░░░░░░░] 22%
+Progress: [███░░░░░░░] 28%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 4
-- Average duration: 4min
-- Total execution time: 0.3 hours
+- Total plans completed: 5
+- Average duration: 5min
+- Total execution time: 0.4 hours
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 01 | 2 | 7min | 3.5min |
-| 02 | 2 | 9min | 4.5min |
+| 02 | 3 | 15min | 5min |
 
 **Recent Trend:**
-- Last 5 plans: 01-01 (3min), 01-02 (4min), 02-01 (5min), 02-02 (4min)
+- Last 5 plans: 01-01 (3min), 01-02 (4min), 02-01 (5min), 02-02 (4min), 02-03 (6min)
 - Trend: stable
 
 *Updated after each plan completion*
@@ -64,6 +64,9 @@ Recent decisions affecting current work:
 - Evidence format: combined Signal+Example with ~100 char quotes and project attribution
 - Confidence thresholds: HIGH 10+ signals across 2+ projects, MEDIUM 5-9, LOW <5, UNSCORED 0
 - Context-dependent dimension splits reported rather than forced single rating
+- Questionnaire confidence capped at MEDIUM/LOW (never HIGH) -- self-report vs observed behavior distinction
+- CLAUDE_INSTRUCTIONS covers all 32 dimension/rating combinations with imperative directives
+- Questionnaire dual-mode: interactive outputs questions JSON, answers mode produces analysis JSON
 
 ### Pending Todos
 
@@ -76,5 +79,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-14
-Stopped at: Completed 02-02-PLAN.md (data sampling pipeline and profile rendering engine)
+Stopped at: Completed 02-03-PLAN.md (questionnaire fallback and Phase 2 test suites) -- Phase 2 complete
 Resume file: None
