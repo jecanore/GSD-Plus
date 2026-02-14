@@ -16,6 +16,7 @@ Model profiles control which Claude model each GSD agent uses. This allows balan
 | gsd-codebase-mapper | sonnet | haiku | haiku |
 | gsd-verifier | sonnet | sonnet | haiku |
 | gsd-plan-checker | sonnet | sonnet | haiku |
+| gsd-user-profiler | opus | sonnet | sonnet |
 | gsd-integration-checker | sonnet | sonnet | haiku |
 
 ## Profile Philosophy
@@ -71,3 +72,6 @@ Verification requires goal-backward reasoning - checking if code *delivers* what
 
 **Why Haiku for gsd-codebase-mapper?**
 Read-only exploration and pattern extraction. No reasoning required, just structured output from file contents.
+
+**Why Opus for gsd-user-profiler in quality?**
+Behavioral analysis from session messages requires nuanced pattern recognition, contextual reasoning about communication style, and careful confidence calibration. Opus handles the subtlety; Sonnet is sufficient for balanced/budget since the reference doc rubric constrains the analysis space.
