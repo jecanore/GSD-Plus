@@ -4607,6 +4607,365 @@ async function cmdExtractMessages(projectArg, options, raw, overridePath) {
   }
 }
 
+async function cmdProfileSample(overridePath, options, raw) {
+  const sessionsDir = getSessionsDir(overridePath);
+  if (!sessionsDir) {
+    const searchedPath = overridePath || '~/.claude/projects';
+    error(`No Claude Code sessions found at ${searchedPath}.${overridePath ? '' : ' Is Claude Code installed?'}`);
+  }
+
+  // Transparency note
+  process.stderr.write('Reading your session history (read-only, nothing is modified or sent anywhere)...\n');
+
+  const limit = options.limit || 150;
+  const maxChars = options.maxChars || 500;
+
+  let projectDirs;
+  try {
+    projectDirs = fs.readdirSync(sessionsDir).filter(entry => {
+      const fullPath = path.join(sessionsDir, entry);
+      try {
+        return fs.statSync(fullPath).isDirectory();
+      } catch {
+        return false;
+      }
+    });
+  } catch (err) {
+    error(`Cannot read sessions directory: ${err.message}`);
+  }
+
+  if (projectDirs.length === 0) {
+    error('No project directories found in sessions directory.');
+  }
+
+  // Gather project metadata for sorting by lastActive descending
+  const projectMeta = [];
+  for (const dirName of projectDirs) {
+    const projectPath = path.join(sessionsDir, dirName);
+    const sessions = scanProjectDir(projectPath);
+    if (sessions.length === 0) continue;
+    const indexData = readSessionIndex(projectPath);
+    const projectName = getProjectName(dirName, indexData);
+    const lastActive = sessions[0].modified;
+    projectMeta.push({ dirName, projectPath, sessions, projectName, lastActive });
+  }
+
+  // Sort by lastActive descending for recency priority
+  projectMeta.sort((a, b) => b.lastActive - a.lastActive);
+
+  const projectCount = projectMeta.length;
+  if (projectCount === 0) {
+    error('No projects with sessions found.');
+  }
+
+  // Calculate per-project session cap
+  const perProjectCap = options.maxPerProject || Math.max(5, Math.floor(limit / projectCount));
+
+  const recencyThreshold = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  const allMessages = [];
+  let skippedContextDumps = 0;
+  const projectBreakdown = [];
+
+  for (const proj of projectMeta) {
+    if (allMessages.length >= limit) break;
+
+    // Cap sessions at per-project limit
+    const cappedSessions = proj.sessions.slice(0, perProjectCap);
+
+    let projectMessages = 0;
+    let projectSessionsUsed = 0;
+
+    for (const session of cappedSessions) {
+      if (allMessages.length >= limit) break;
+
+      // Recency weighting: recent sessions get more messages, older get fewer
+      const isRecent = session.modified.getTime() >= recencyThreshold;
+      const perSessionMax = isRecent ? 10 : 3;
+
+      const remaining = Math.min(perSessionMax, limit - allMessages.length);
+
+      try {
+        const msgs = await streamExtractMessages(session.filePath, isGenuineUserMessage, remaining);
+        let sessionUsed = false;
+
+        for (const msg of msgs) {
+          if (allMessages.length >= limit) break;
+
+          // Check for session context dumps
+          const content = msg.content || '';
+          if (content.startsWith('This session is being continued')) {
+            skippedContextDumps++;
+            continue;
+          }
+
+          // Check for log-pattern dumps (>80% of lines match log patterns)
+          const lines = content.split('\n').filter(l => l.trim().length > 0);
+          if (lines.length > 3) {
+            const logPattern = /^\[?(DEBUG|INFO|WARN|ERROR|LOG)\]?/i;
+            const timestampPattern = /^\d{4}-\d{2}-\d{2}/;
+            const logLines = lines.filter(l => logPattern.test(l.trim()) || timestampPattern.test(l.trim()));
+            if (logLines.length / lines.length > 0.8) {
+              skippedContextDumps++;
+              continue;
+            }
+          }
+
+          // Truncate content to maxChars for profiling
+          const truncated = truncateContent(content, maxChars);
+
+          allMessages.push({
+            sessionId: msg.sessionId,
+            projectName: proj.projectName,
+            projectPath: msg.projectPath,
+            timestamp: msg.timestamp,
+            content: truncated,
+          });
+
+          projectMessages++;
+          sessionUsed = true;
+        }
+        if (sessionUsed) projectSessionsUsed++;
+      } catch {
+        // Skip unreadable sessions silently for sampling
+        continue;
+      }
+    }
+
+    if (projectMessages > 0) {
+      projectBreakdown.push({
+        project: proj.projectName,
+        messages: projectMessages,
+        sessions: projectSessionsUsed,
+      });
+    }
+  }
+
+  // Write JSONL output to temp file
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-profile-'));
+  const outputPath = path.join(tmpDir, 'profile-sample.jsonl');
+  for (const msg of allMessages) {
+    fs.appendFileSync(outputPath, JSON.stringify(msg) + '\n');
+  }
+
+  const result = {
+    output_file: outputPath,
+    projects_sampled: projectBreakdown.length,
+    messages_sampled: allMessages.length,
+    per_project_cap: perProjectCap,
+    message_char_limit: maxChars,
+    skipped_context_dumps: skippedContextDumps,
+    project_breakdown: projectBreakdown,
+  };
+
+  output(result, raw);
+}
+
+function cmdWriteProfile(cwd, options, raw) {
+  if (!options.input) {
+    error('--input <analysis-json-path> is required');
+  }
+
+  // Read and parse analysis JSON
+  let analysisPath = options.input;
+  if (!path.isAbsolute(analysisPath)) {
+    analysisPath = path.join(cwd, analysisPath);
+  }
+  if (!fs.existsSync(analysisPath)) {
+    error(`Analysis file not found: ${analysisPath}`);
+  }
+
+  let analysis;
+  try {
+    analysis = JSON.parse(fs.readFileSync(analysisPath, 'utf-8'));
+  } catch (err) {
+    error(`Failed to parse analysis JSON: ${err.message}`);
+  }
+
+  // Validate structure
+  if (!analysis.dimensions || typeof analysis.dimensions !== 'object') {
+    error('Analysis JSON must contain a "dimensions" object');
+  }
+  if (!analysis.profile_version) {
+    error('Analysis JSON must contain "profile_version"');
+  }
+
+  const DIMENSION_KEYS = [
+    'communication_style', 'decision_speed', 'explanation_depth',
+    'debugging_approach', 'ux_philosophy', 'vendor_philosophy',
+    'frustration_triggers', 'learning_style'
+  ];
+
+  // Layer 2 sensitive content filter
+  const SENSITIVE_PATTERNS = [
+    /sk-[a-zA-Z0-9]{20,}/g,
+    /Bearer\s+[a-zA-Z0-9._-]+/gi,
+    /password\s*[:=]\s*\S+/gi,
+    /secret\s*[:=]\s*\S+/gi,
+    /token\s*[:=]\s*\S+/gi,
+    /api[_-]?key\s*[:=]\s*\S+/gi,
+    /\/Users\/[a-zA-Z0-9._-]+\//g,
+    /\/home\/[a-zA-Z0-9._-]+\//g,
+    /ghp_[a-zA-Z0-9]{36}/g,
+    /gho_[a-zA-Z0-9]{36}/g,
+    /xoxb-[a-zA-Z0-9-]+/g,
+  ];
+
+  let redactedCount = 0;
+
+  function redactSensitive(text) {
+    if (typeof text !== 'string') return text;
+    let result = text;
+    for (const pattern of SENSITIVE_PATTERNS) {
+      // Reset lastIndex for global regexes
+      pattern.lastIndex = 0;
+      const matches = result.match(pattern);
+      if (matches) {
+        redactedCount += matches.length;
+        result = result.replace(pattern, '[REDACTED]');
+      }
+    }
+    return result;
+  }
+
+  // Scan all evidence quotes for sensitive content
+  for (const dimKey of Object.keys(analysis.dimensions)) {
+    const dim = analysis.dimensions[dimKey];
+    if (dim.evidence && Array.isArray(dim.evidence)) {
+      for (let i = 0; i < dim.evidence.length; i++) {
+        const ev = dim.evidence[i];
+        if (ev.quote) ev.quote = redactSensitive(ev.quote);
+        if (ev.example) ev.example = redactSensitive(ev.example);
+        if (ev.signal) ev.signal = redactSensitive(ev.signal);
+      }
+    }
+  }
+
+  if (redactedCount > 0) {
+    process.stderr.write(`Sensitive content redacted: ${redactedCount} pattern(s) removed from evidence quotes\n`);
+  }
+
+  // Read template
+  const templatePath = path.join(__dirname, '..', 'templates', 'user-profile.md');
+  if (!fs.existsSync(templatePath)) {
+    error(`Template not found: ${templatePath}`);
+  }
+  let template = fs.readFileSync(templatePath, 'utf-8');
+
+  // Build summary_instructions from HIGH and MEDIUM confidence dimensions
+  const summaryLines = [];
+  const dimensionLabels = {
+    communication_style: 'Communication',
+    decision_speed: 'Decisions',
+    explanation_depth: 'Explanations',
+    debugging_approach: 'Debugging',
+    ux_philosophy: 'UX Philosophy',
+    vendor_philosophy: 'Vendor Philosophy',
+    frustration_triggers: 'Frustration Triggers',
+    learning_style: 'Learning Style',
+  };
+
+  let highCount = 0;
+  let mediumCount = 0;
+  let lowCount = 0;
+  let dimensionsScored = 0;
+
+  for (const dimKey of DIMENSION_KEYS) {
+    const dim = analysis.dimensions[dimKey];
+    if (!dim) continue;
+    const conf = (dim.confidence || '').toUpperCase();
+    if (conf === 'HIGH' || conf === 'MEDIUM' || conf === 'LOW') {
+      dimensionsScored++;
+    }
+    if (conf === 'HIGH') {
+      highCount++;
+      if (dim.claude_instruction) {
+        summaryLines.push(`- **${dimensionLabels[dimKey] || dimKey}:** ${dim.claude_instruction} (HIGH)`);
+      }
+    } else if (conf === 'MEDIUM') {
+      mediumCount++;
+      if (dim.claude_instruction) {
+        summaryLines.push(`- **${dimensionLabels[dimKey] || dimKey}:** ${dim.claude_instruction} (MEDIUM)`);
+      }
+    } else if (conf === 'LOW') {
+      lowCount++;
+    }
+  }
+
+  const summaryInstructions = summaryLines.length > 0
+    ? summaryLines.join('\n')
+    : '- No high or medium confidence dimensions scored yet.';
+
+  // Replace top-level placeholders
+  template = template.replace(/\{\{generated_at\}\}/g, new Date().toISOString());
+  template = template.replace(/\{\{data_source\}\}/g, analysis.data_source || 'session_analysis');
+  template = template.replace(/\{\{projects_list\}\}/g, (analysis.projects_list || []).join(', '));
+  template = template.replace(/\{\{message_count\}\}/g, String(analysis.message_count || 0));
+  template = template.replace(/\{\{summary_instructions\}\}/g, summaryInstructions);
+  template = template.replace(/\{\{profile_version\}\}/g, analysis.profile_version);
+  template = template.replace(/\{\{projects_count\}\}/g, String((analysis.projects_list || []).length));
+  template = template.replace(/\{\{dimensions_scored\}\}/g, String(dimensionsScored));
+  template = template.replace(/\{\{high_confidence_count\}\}/g, String(highCount));
+  template = template.replace(/\{\{medium_confidence_count\}\}/g, String(mediumCount));
+  template = template.replace(/\{\{low_confidence_count\}\}/g, String(lowCount));
+  template = template.replace(/\{\{sensitive_excluded_summary\}\}/g,
+    redactedCount > 0 ? `${redactedCount} pattern(s) redacted` : 'None detected');
+
+  // Render each dimension section
+  for (const dimKey of DIMENSION_KEYS) {
+    const dim = analysis.dimensions[dimKey] || {};
+    const rating = dim.rating || 'UNSCORED';
+    const confidence = dim.confidence || 'UNSCORED';
+    const instruction = dim.claude_instruction || 'No strong preference detected. Ask the developer when this dimension is relevant.';
+    const summary = dim.summary || '';
+
+    // Build evidence block
+    let evidenceBlock = '';
+    if (dim.evidence && Array.isArray(dim.evidence) && dim.evidence.length > 0) {
+      const evidenceLines = dim.evidence.map(ev => {
+        const signal = ev.signal || ev.pattern || '';
+        const quote = ev.quote || ev.example || '';
+        const project = ev.project || 'unknown';
+        return `- **Signal:** ${signal} / **Example:** "${quote}" -- project: ${project}`;
+      });
+      evidenceBlock = evidenceLines.join('\n');
+    } else {
+      evidenceBlock = '- No evidence collected for this dimension.';
+    }
+
+    template = template.replace(new RegExp(`\\{\\{${dimKey}\\.rating\\}\\}`, 'g'), rating);
+    template = template.replace(new RegExp(`\\{\\{${dimKey}\\.confidence\\}\\}`, 'g'), confidence);
+    template = template.replace(new RegExp(`\\{\\{${dimKey}\\.claude_instruction\\}\\}`, 'g'), instruction);
+    template = template.replace(new RegExp(`\\{\\{${dimKey}\\.summary\\}\\}`, 'g'), summary);
+    template = template.replace(new RegExp(`\\{\\{${dimKey}\\.evidence\\}\\}`, 'g'), evidenceBlock);
+  }
+
+  // Determine output path
+  let outputPath = options.output;
+  if (!outputPath) {
+    outputPath = path.join(os.homedir(), '.claude', 'get-shit-done', 'USER-PROFILE.md');
+  } else if (!path.isAbsolute(outputPath)) {
+    outputPath = path.join(cwd, outputPath);
+  }
+
+  // Ensure output directory exists
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+
+  // Write rendered profile
+  fs.writeFileSync(outputPath, template, 'utf-8');
+
+  const result = {
+    profile_path: outputPath,
+    dimensions_scored: dimensionsScored,
+    high_confidence: highCount,
+    medium_confidence: mediumCount,
+    low_confidence: lowCount,
+    sensitive_redacted: redactedCount,
+    source: analysis.data_source || 'session_analysis',
+  };
+
+  output(result, raw);
+}
+
 // ─── CLI Router ───────────────────────────────────────────────────────────────
 
 async function main() {
@@ -5008,6 +5367,29 @@ async function main() {
         error('Usage: gsd-tools extract-messages <project> [--session <id>] [--limit N] [--path <dir>]\nRun scan-sessions first to see available projects.');
       }
       await cmdExtractMessages(projectArg, { sessionId, limit }, raw, sessionsPath);
+      break;
+    }
+
+    case 'profile-sample': {
+      const pathIdx = args.indexOf('--path');
+      const sessionsPath = pathIdx !== -1 ? args[pathIdx + 1] : null;
+      const limitIdx = args.indexOf('--limit');
+      const limit = limitIdx !== -1 ? parseInt(args[limitIdx + 1], 10) : 150;
+      const maxPerIdx = args.indexOf('--max-per-project');
+      const maxPerProject = maxPerIdx !== -1 ? parseInt(args[maxPerIdx + 1], 10) : null;
+      const maxCharsIdx = args.indexOf('--max-chars');
+      const maxChars = maxCharsIdx !== -1 ? parseInt(args[maxCharsIdx + 1], 10) : 500;
+      await cmdProfileSample(sessionsPath, { limit, maxPerProject, maxChars }, raw);
+      break;
+    }
+
+    case 'write-profile': {
+      const inputIdx = args.indexOf('--input');
+      const inputPath = inputIdx !== -1 ? args[inputIdx + 1] : null;
+      if (!inputPath) error('--input <analysis-json-path> is required');
+      const outputIdx = args.indexOf('--output');
+      const outputPath = outputIdx !== -1 ? args[outputIdx + 1] : null;
+      cmdWriteProfile(cwd, { input: inputPath, output: outputPath }, raw);
       break;
     }
 
