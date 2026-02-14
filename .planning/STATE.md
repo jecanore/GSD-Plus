@@ -10,18 +10,18 @@ See: .planning/PROJECT.md (updated 2026-02-12)
 ## Current Position
 
 Phase: 3 of 9 (Profile Activation)
-Plan: 1 of 3 in current phase
+Plan: 2 of 3 in current phase
 Status: Executing
-Last activity: 2026-02-14 -- Completed 03-01 (command definition and orchestration workflow)
+Last activity: 2026-02-14 -- Completed 03-02 (artifact generation subcommands)
 
-Progress: [████░░░░░░] 33%
+Progress: [████░░░░░░] 36%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 6
-- Average duration: 4.5min
-- Total execution time: 0.45 hours
+- Total plans completed: 7
+- Average duration: 4.4min
+- Total execution time: 0.5 hours
 
 **By Phase:**
 
@@ -29,10 +29,10 @@ Progress: [████░░░░░░] 33%
 |-------|-------|-------|----------|
 | 01 | 2 | 7min | 3.5min |
 | 02 | 3 | 15min | 5min |
-| 03 | 1 | 3min | 3min |
+| 03 | 2 | 8min | 4min |
 
 **Recent Trend:**
-- Last 5 plans: 01-02 (4min), 02-01 (5min), 02-02 (4min), 02-03 (6min), 03-01 (3min)
+- Last 5 plans: 02-01 (5min), 02-02 (4min), 02-03 (6min), 03-01 (3min), 03-02 (5min)
 - Trend: stable
 
 *Updated after each plan completion*
@@ -72,6 +72,9 @@ Recent decisions affecting current work:
 - Consent gate skipped for --questionnaire path since no JSONL reading occurs
 - Abbreviated consent for --refresh path -- brief reminder instead of full consent screen
 - Split resolution keeps dominant rating with context_note for context-dependent choices
+- dev-preferences output path defaults to ~/.claude/commands/gsd/dev-preferences.md (ACTV-04 GSD namespace)
+- CLAUDE.md marker-based section management: create/update/append depending on file state
+- CLAUDE_INSTRUCTIONS fallback when dim.claude_instruction is absent in analysis JSON
 
 ### Pending Todos
 
@@ -84,5 +87,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-02-14
-Stopped at: Completed 03-01-PLAN.md (command definition and orchestration workflow)
+Stopped at: Completed 03-02-PLAN.md (artifact generation subcommands)
 Resume file: None
