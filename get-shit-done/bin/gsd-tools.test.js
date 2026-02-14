@@ -2777,3 +2777,217 @@ describe('profile-questionnaire', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// generate-dev-preferences command
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('generate-dev-preferences', () => {
+  let tmpDir;
+
+  const MOCK_ANALYSIS = {
+    profile_version: '1.0',
+    data_source: 'session_analysis',
+    projects_analyzed: ['project-a', 'project-b'],
+    dimensions: {
+      communication_style: {
+        rating: 'detailed-structured',
+        confidence: 'HIGH',
+        claude_instruction: 'Use headers, numbered lists, acknowledge context before responding.',
+        summary: 'Consistently provides structured context.',
+        cross_project_consistent: true,
+        evidence: [{ signal: 'Structured headers in requests', project: 'project-a' }],
+      },
+      decision_speed: {
+        rating: 'deliberate-informed',
+        confidence: 'MEDIUM',
+        claude_instruction: 'Present comparison tables with trade-offs.',
+        summary: 'Prefers to evaluate options before committing.',
+        cross_project_consistent: true,
+        evidence: [],
+      },
+      explanation_depth: {
+        rating: 'concise',
+        confidence: 'MEDIUM',
+        claude_instruction: 'Keep explanations brief and pair with code.',
+        summary: 'Prefers concise explanations.',
+        cross_project_consistent: true,
+        evidence: [],
+      },
+      debugging_approach: {
+        rating: 'diagnostic',
+        confidence: 'HIGH',
+        claude_instruction: 'Diagnose root cause before presenting fix.',
+        summary: 'Diagnostic debugging approach.',
+        cross_project_consistent: true,
+        evidence: [],
+      },
+      ux_philosophy: {
+        rating: 'pragmatic',
+        confidence: 'MEDIUM',
+        claude_instruction: 'Build clean, usable interfaces without over-engineering.',
+        summary: 'Pragmatic UX approach.',
+        cross_project_consistent: true,
+        evidence: [],
+      },
+      vendor_philosophy: {
+        rating: 'conservative',
+        confidence: 'LOW',
+        claude_instruction: 'Recommend well-established tools with strong community support.',
+        summary: 'Tends toward established tools.',
+        cross_project_consistent: false,
+        evidence: [],
+      },
+      frustration_triggers: {
+        rating: 'scope-creep',
+        confidence: 'MEDIUM',
+        claude_instruction: 'Do exactly what is asked, nothing more.',
+        summary: 'Frustrated by scope creep.',
+        cross_project_consistent: true,
+        evidence: [],
+      },
+      learning_style: {
+        rating: 'self-directed',
+        confidence: 'MEDIUM',
+        claude_instruction: 'Point to relevant code sections and let the developer explore.',
+        summary: 'Self-directed learner.',
+        cross_project_consistent: true,
+        evidence: [],
+      },
+    },
+  };
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'gsd-gen-devpref-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test('produces valid dev-preferences file from session analysis JSON', () => {
+    const analysisPath = path.join(tmpDir, 'analysis.json');
+    const outputPath = path.join(tmpDir, 'dev-preferences.md');
+    fs.writeFileSync(analysisPath, JSON.stringify(MOCK_ANALYSIS));
+
+    const result = runGsdTools(`generate-dev-preferences --analysis ${analysisPath} --output ${outputPath}`);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    // Assert output file exists
+    assert.ok(fs.existsSync(outputPath), 'output file should exist');
+
+    const content = fs.readFileSync(outputPath, 'utf-8');
+
+    // Assert YAML frontmatter with description
+    assert.ok(content.includes('description:'), 'should contain YAML frontmatter with description');
+
+    // Assert Behavioral Directives section
+    assert.ok(content.includes('Behavioral Directives'), 'should contain Behavioral Directives section');
+
+    // Assert directive text from mock analysis
+    assert.ok(content.includes('Use headers, numbered lists'), 'should contain directive text from analysis');
+
+    // Assert confidence annotations
+    assert.ok(content.includes('HIGH confidence'), 'should contain HIGH confidence annotation');
+
+    // Assert JSON output
+    const output = JSON.parse(result.output);
+    assert.strictEqual(output.command_name, '/gsd:dev-preferences', 'JSON output should have command_name');
+    assert.ok(output.dimensions_included.length >= 2, 'should include at least 2 dimensions');
+  });
+
+  test('renders all 8 dimension sections when all present', () => {
+    const analysisPath = path.join(tmpDir, 'analysis.json');
+    const outputPath = path.join(tmpDir, 'dev-preferences.md');
+    fs.writeFileSync(analysisPath, JSON.stringify(MOCK_ANALYSIS));
+
+    const result = runGsdTools(`generate-dev-preferences --analysis ${analysisPath} --output ${outputPath}`);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    const content = fs.readFileSync(outputPath, 'utf-8');
+
+    const expectedLabels = [
+      'Communication', 'Decision Support', 'Explanations', 'Debugging',
+      'UX Approach', 'Library & Tool Choices', 'Boundaries', 'Learning Support',
+    ];
+
+    for (const label of expectedLabels) {
+      assert.ok(content.includes(`### ${label}`), `should contain dimension header: ${label}`);
+    }
+  });
+
+  test('handles questionnaire-only data source correctly', () => {
+    const qAnalysis = JSON.parse(JSON.stringify(MOCK_ANALYSIS));
+    qAnalysis.data_source = 'questionnaire';
+
+    const analysisPath = path.join(tmpDir, 'q-analysis.json');
+    const outputPath = path.join(tmpDir, 'dev-preferences.md');
+    fs.writeFileSync(analysisPath, JSON.stringify(qAnalysis));
+
+    const result = runGsdTools(`generate-dev-preferences --analysis ${analysisPath} --output ${outputPath}`);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    const content = fs.readFileSync(outputPath, 'utf-8');
+    assert.ok(content.includes('questionnaire-only profile'), 'should contain questionnaire-only profile text');
+    assert.ok(content.includes('questionnaire'), 'should render data_source as questionnaire');
+  });
+
+  test('uses CLAUDE_INSTRUCTIONS fallback when claude_instruction missing', () => {
+    const fallbackAnalysis = JSON.parse(JSON.stringify(MOCK_ANALYSIS));
+    // Remove claude_instruction from communication_style but keep rating
+    delete fallbackAnalysis.dimensions.communication_style.claude_instruction;
+
+    const analysisPath = path.join(tmpDir, 'fallback-analysis.json');
+    const outputPath = path.join(tmpDir, 'dev-preferences.md');
+    fs.writeFileSync(analysisPath, JSON.stringify(fallbackAnalysis));
+
+    const result = runGsdTools(`generate-dev-preferences --analysis ${analysisPath} --output ${outputPath}`);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    const content = fs.readFileSync(outputPath, 'utf-8');
+    // Should still contain a directive for Communication -- either from CLAUDE_INSTRUCTIONS or fallback
+    assert.ok(content.includes('### Communication'), 'should still contain Communication section');
+    // The CLAUDE_INSTRUCTIONS lookup for detailed-structured should produce the known instruction
+    assert.ok(
+      content.includes('structured communication') || content.includes('headers') || content.includes('communication style'),
+      'should contain fallback instruction from CLAUDE_INSTRUCTIONS lookup'
+    );
+  });
+
+  test('creates parent directories when output path does not exist', () => {
+    const analysisPath = path.join(tmpDir, 'analysis.json');
+    const outputPath = path.join(tmpDir, 'nested', 'deep', 'dir', 'dev-preferences.md');
+    fs.writeFileSync(analysisPath, JSON.stringify(MOCK_ANALYSIS));
+
+    const result = runGsdTools(`generate-dev-preferences --analysis ${analysisPath} --output ${outputPath}`);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+    assert.ok(fs.existsSync(outputPath), 'output file should be created in nested directory');
+  });
+
+  test('errors when analysis file not found', () => {
+    const result = runGsdTools('generate-dev-preferences --analysis /nonexistent/path.json --output /tmp/out.md');
+    assert.ok(!result.success, 'should fail for missing analysis file');
+    assert.ok(result.error.includes('not found'), 'error should mention not found');
+  });
+
+  test('errors when analysis JSON is malformed', () => {
+    const badPath = path.join(tmpDir, 'bad.json');
+    fs.writeFileSync(badPath, '{ not valid json !!!');
+
+    const result = runGsdTools(`generate-dev-preferences --analysis ${badPath} --output ${path.join(tmpDir, 'out.md')}`);
+    assert.ok(!result.success, 'should fail for malformed JSON');
+    assert.ok(result.error.includes('parse') || result.error.includes('JSON'), 'error should mention JSON parsing');
+  });
+
+  test('accepts --stack option for custom stack preferences', () => {
+    const analysisPath = path.join(tmpDir, 'analysis.json');
+    const outputPath = path.join(tmpDir, 'dev-preferences.md');
+    fs.writeFileSync(analysisPath, JSON.stringify(MOCK_ANALYSIS));
+
+    const result = runGsdTools(`generate-dev-preferences --analysis ${analysisPath} --output ${outputPath} --stack "TypeScript, React, Node.js"`);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    const content = fs.readFileSync(outputPath, 'utf-8');
+    assert.ok(content.includes('TypeScript, React, Node.js'), 'should contain custom stack text in output');
+  });
+});
