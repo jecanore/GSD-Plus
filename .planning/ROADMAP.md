@@ -62,14 +62,14 @@ Plans:
   1. Running `/gsd:profile-user` walks through consent gate, session scan, analysis, and profile generation in one flow
   2. Running `/gsd:profile-user --questionnaire` skips session analysis entirely and uses interactive prompts
   3. Running `/gsd:profile-user --refresh` rebuilds the profile even when one already exists
-  4. `/dev-preferences` command file appears at `~/.claude/commands/dev-preferences.md` and is readable by Claude Code
+  4. `/dev-preferences` command file appears at `~/.claude/commands/gsd/dev-preferences.md` (GSD namespace) and is readable by Claude Code
   5. Artifact selection lets developer choose which outputs to generate (CLAUDE.md, /dev-preferences, global CLAUDE.md)
 **Plans**: 3 plans
 
 Plans:
-- [ ] 03-01-PLAN.md -- Command definition and orchestration workflow (/gsd:profile-user command + 10-step workflow)
-- [ ] 03-02-PLAN.md -- Artifact generation subcommands (generate-dev-preferences, generate-claude-profile, dev-preferences template)
-- [ ] 03-03-PLAN.md -- Tests for artifact generation subcommands (17 test cases)
+- [x] 03-01-PLAN.md -- Command definition and orchestration workflow (/gsd:profile-user command + 10-step workflow)
+- [x] 03-02-PLAN.md -- Artifact generation subcommands (generate-dev-preferences, generate-claude-profile, dev-preferences template)
+- [x] 03-03-PLAN.md -- Tests for artifact generation subcommands (17 test cases)
 
 ### Phase 4: Context Generation
 **Goal**: Generate project-specific CLAUDE.md and curated phase briefs from profile + project artifacts, with workflow integration that makes context automatic
@@ -145,7 +145,7 @@ Phase 1 ✓ → Phase 2 ✓ → Phase 3 (finishing) → Phase 4 ──→ Phase 
 |-------|----------------|--------|-----------|
 | 1. Session Data Pipeline | 2/2 | ✓ Complete | 2026-02-13 |
 | 2. Profiling Engine | 3/3 | ✓ Complete | 2026-02-14 |
-| 3. Profile Activation | 0/3 | Planned | - |
+| 3. Profile Activation | 3/3 | ✓ Complete | 2026-02-14 |
 | 4. Context Generation | 0/5 | Not started | - |
 | 5. Advisor Mode | 0/2 | Not started | - |
 | 6. Quality & Documentation | 0/5 | Not started | - |
