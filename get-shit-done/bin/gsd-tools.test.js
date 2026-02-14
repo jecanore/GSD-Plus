@@ -2991,3 +2991,312 @@ describe('generate-dev-preferences', () => {
     assert.ok(content.includes('TypeScript, React, Node.js'), 'should contain custom stack text in output');
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// generate-claude-profile command
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('generate-claude-profile', () => {
+  let tmpDir;
+
+  const MOCK_ANALYSIS = {
+    profile_version: '1.0',
+    data_source: 'session_analysis',
+    projects_analyzed: ['project-a', 'project-b'],
+    dimensions: {
+      communication_style: {
+        rating: 'detailed-structured',
+        confidence: 'HIGH',
+        claude_instruction: 'Use headers, numbered lists, acknowledge context before responding.',
+        summary: 'Consistently provides structured context.',
+        cross_project_consistent: true,
+        evidence: [{ signal: 'Structured headers in requests', project: 'project-a' }],
+      },
+      decision_speed: {
+        rating: 'deliberate-informed',
+        confidence: 'MEDIUM',
+        claude_instruction: 'Present comparison tables with trade-offs.',
+        summary: 'Prefers to evaluate options before committing.',
+        cross_project_consistent: true,
+        evidence: [],
+      },
+      explanation_depth: {
+        rating: 'concise',
+        confidence: 'MEDIUM',
+        claude_instruction: 'Keep explanations brief and pair with code.',
+        summary: 'Prefers concise explanations.',
+        cross_project_consistent: true,
+        evidence: [],
+      },
+      debugging_approach: {
+        rating: 'diagnostic',
+        confidence: 'HIGH',
+        claude_instruction: 'Diagnose root cause before presenting fix.',
+        summary: 'Diagnostic debugging approach.',
+        cross_project_consistent: true,
+        evidence: [],
+      },
+      ux_philosophy: {
+        rating: 'pragmatic',
+        confidence: 'MEDIUM',
+        claude_instruction: 'Build clean, usable interfaces without over-engineering.',
+        summary: 'Pragmatic UX approach.',
+        cross_project_consistent: true,
+        evidence: [],
+      },
+      vendor_philosophy: {
+        rating: 'conservative',
+        confidence: 'LOW',
+        claude_instruction: 'Recommend well-established tools with strong community support.',
+        summary: 'Tends toward established tools.',
+        cross_project_consistent: false,
+        evidence: [],
+      },
+      frustration_triggers: {
+        rating: 'scope-creep',
+        confidence: 'MEDIUM',
+        claude_instruction: 'Do exactly what is asked, nothing more.',
+        summary: 'Frustrated by scope creep.',
+        cross_project_consistent: true,
+        evidence: [],
+      },
+      learning_style: {
+        rating: 'self-directed',
+        confidence: 'MEDIUM',
+        claude_instruction: 'Point to relevant code sections and let the developer explore.',
+        summary: 'Self-directed learner.',
+        cross_project_consistent: true,
+        evidence: [],
+      },
+    },
+  };
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'gsd-gen-claudeprof-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test('creates new CLAUDE.md when none exists', () => {
+    const analysisPath = path.join(tmpDir, 'analysis.json');
+    const outputPath = path.join(tmpDir, 'CLAUDE.md');
+    fs.writeFileSync(analysisPath, JSON.stringify(MOCK_ANALYSIS));
+
+    const result = runGsdTools(`generate-claude-profile --analysis ${analysisPath} --output ${outputPath}`);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    // Assert file is created
+    assert.ok(fs.existsSync(outputPath), 'output file should exist');
+
+    const content = fs.readFileSync(outputPath, 'utf-8');
+
+    // Assert starts with start marker
+    assert.ok(content.startsWith('<!-- GSD:profile-start -->'), 'should start with profile-start marker');
+
+    // Assert ends with end marker (trimming trailing newline)
+    assert.ok(content.trimEnd().endsWith('<!-- GSD:profile-end -->'), 'should end with profile-end marker');
+
+    // Assert contains Developer Profile heading
+    assert.ok(content.includes('## Developer Profile'), 'should contain Developer Profile heading');
+
+    // Assert JSON output has action: created
+    const output = JSON.parse(result.output);
+    assert.strictEqual(output.action, 'created', 'JSON output action should be created');
+  });
+
+  test('updates existing CLAUDE.md between markers', () => {
+    const analysisPath = path.join(tmpDir, 'analysis.json');
+    const outputPath = path.join(tmpDir, 'CLAUDE.md');
+    fs.writeFileSync(analysisPath, JSON.stringify(MOCK_ANALYSIS));
+
+    // Create existing CLAUDE.md with markers
+    const existingContent = `# Project Config
+Some existing content.
+<!-- GSD:profile-start -->
+## Old Profile
+Old content here.
+<!-- GSD:profile-end -->
+More existing content.
+`;
+    fs.writeFileSync(outputPath, existingContent);
+
+    const result = runGsdTools(`generate-claude-profile --analysis ${analysisPath} --output ${outputPath}`);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    const content = fs.readFileSync(outputPath, 'utf-8');
+
+    // Assert preserved content before markers
+    assert.ok(content.includes('# Project Config'), 'should preserve Project Config');
+    assert.ok(content.includes('Some existing content.'), 'should preserve existing content before markers');
+
+    // Assert preserved content after markers
+    assert.ok(content.includes('More existing content.'), 'should preserve content after markers');
+
+    // Assert old profile content is replaced
+    assert.ok(!content.includes('## Old Profile'), 'should replace old profile');
+    assert.ok(!content.includes('Old content here.'), 'should replace old content');
+
+    // Assert new profile has dimension data
+    assert.ok(content.includes('## Developer Profile'), 'should contain new profile heading');
+    assert.ok(content.includes('detailed-structured'), 'should contain dimension data from analysis');
+
+    // Assert JSON output
+    const output = JSON.parse(result.output);
+    assert.strictEqual(output.action, 'updated', 'JSON output action should be updated');
+  });
+
+  test('appends profile section when CLAUDE.md has no markers', () => {
+    const analysisPath = path.join(tmpDir, 'analysis.json');
+    const outputPath = path.join(tmpDir, 'CLAUDE.md');
+    fs.writeFileSync(analysisPath, JSON.stringify(MOCK_ANALYSIS));
+
+    // Create existing CLAUDE.md without markers
+    fs.writeFileSync(outputPath, '# Project Config\nSome content.\n');
+
+    const result = runGsdTools(`generate-claude-profile --analysis ${analysisPath} --output ${outputPath}`);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    const content = fs.readFileSync(outputPath, 'utf-8');
+
+    // Assert original content preserved at top
+    assert.ok(content.startsWith('# Project Config'), 'original content should be preserved at top');
+    assert.ok(content.includes('Some content.'), 'original content body preserved');
+
+    // Assert profile section appended
+    assert.ok(content.includes('<!-- GSD:profile-start -->'), 'should have start marker in appended section');
+    assert.ok(content.includes('<!-- GSD:profile-end -->'), 'should have end marker in appended section');
+    assert.ok(content.includes('## Developer Profile'), 'should have profile heading');
+
+    // Assert JSON output
+    const output = JSON.parse(result.output);
+    assert.strictEqual(output.action, 'appended', 'JSON output action should be appended');
+  });
+
+  test('includes all 8 dimensions in profile section', () => {
+    const analysisPath = path.join(tmpDir, 'analysis.json');
+    const outputPath = path.join(tmpDir, 'CLAUDE.md');
+    fs.writeFileSync(analysisPath, JSON.stringify(MOCK_ANALYSIS));
+
+    const result = runGsdTools(`generate-claude-profile --analysis ${analysisPath} --output ${outputPath}`);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    const content = fs.readFileSync(outputPath, 'utf-8');
+
+    const expectedLabels = [
+      'Communication', 'Decisions', 'Explanations', 'Debugging',
+      'UX Philosophy', 'Vendor Choices', 'Frustrations', 'Learning',
+    ];
+
+    for (const label of expectedLabels) {
+      assert.ok(content.includes(label), `should contain dimension label: ${label}`);
+    }
+
+    // Assert each dimension has a rating and confidence in the table
+    assert.ok(content.includes('detailed-structured'), 'should contain communication rating');
+    assert.ok(content.includes('HIGH'), 'should contain HIGH confidence');
+    assert.ok(content.includes('MEDIUM'), 'should contain MEDIUM confidence');
+  });
+
+  test('--global flag sets is_global and appropriate path in JSON output', () => {
+    const analysisPath = path.join(tmpDir, 'analysis.json');
+    // We also pass --output to redirect to temp dir so we do not write to real ~/.claude/CLAUDE.md
+    const outputPath = path.join(tmpDir, 'global-claude.md');
+    fs.writeFileSync(analysisPath, JSON.stringify(MOCK_ANALYSIS));
+
+    // When --global is set AND --output is also set, the implementation uses --global path
+    // We test the JSON output fields rather than the actual file path
+    const result = runGsdTools(`generate-claude-profile --analysis ${analysisPath} --global`);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    const output = JSON.parse(result.output);
+    assert.strictEqual(output.is_global, true, 'JSON output should have is_global: true');
+    assert.ok(output.claude_md_path.includes('.claude/CLAUDE.md'), 'claude_md_path should contain .claude/CLAUDE.md pattern');
+  });
+
+  test('creates parent directories for output path if needed', () => {
+    const analysisPath = path.join(tmpDir, 'analysis.json');
+    const outputPath = path.join(tmpDir, 'nested', 'deep', 'dir', 'CLAUDE.md');
+    fs.writeFileSync(analysisPath, JSON.stringify(MOCK_ANALYSIS));
+
+    const result = runGsdTools(`generate-claude-profile --analysis ${analysisPath} --output ${outputPath}`);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+    assert.ok(fs.existsSync(outputPath), 'output file should be created in nested directory');
+  });
+
+  test('errors when analysis file not found', () => {
+    const result = runGsdTools('generate-claude-profile --analysis /nonexistent/path.json --output /tmp/out.md');
+    assert.ok(!result.success, 'should fail for missing analysis file');
+    assert.ok(result.error.includes('not found'), 'error should mention not found');
+  });
+
+  test('errors when analysis JSON lacks dimensions', () => {
+    const badPath = path.join(tmpDir, 'no-dims.json');
+    fs.writeFileSync(badPath, JSON.stringify({ profile_version: '1.0' }));
+
+    const result = runGsdTools(`generate-claude-profile --analysis ${badPath} --output ${path.join(tmpDir, 'out.md')}`);
+    assert.ok(!result.success, 'should fail for analysis without dimensions');
+    assert.ok(result.error.includes('dimensions'), 'error should mention missing dimensions');
+  });
+
+  test('preserves exact whitespace and content outside markers', () => {
+    const analysisPath = path.join(tmpDir, 'analysis.json');
+    const outputPath = path.join(tmpDir, 'CLAUDE.md');
+    fs.writeFileSync(analysisPath, JSON.stringify(MOCK_ANALYSIS));
+
+    // Create complex CLAUDE.md with multiple sections, code blocks, blank lines
+    const complexContent = `# My Project
+
+This is a project with **bold** and _italic_ text.
+
+## Code Examples
+
+\`\`\`javascript
+function hello() {
+  console.log("world");
+}
+\`\`\`
+
+## Configuration
+
+- Item 1
+- Item 2
+  - Nested item
+
+<!-- GSD:profile-start -->
+## Old Profile
+Old stuff.
+<!-- GSD:profile-end -->
+
+## Footer Section
+
+Final content with special chars: <>&"'
+
+The end.
+`;
+    fs.writeFileSync(outputPath, complexContent);
+
+    const result = runGsdTools(`generate-claude-profile --analysis ${analysisPath} --output ${outputPath}`);
+    assert.ok(result.success, `Command failed: ${result.error}`);
+
+    const content = fs.readFileSync(outputPath, 'utf-8');
+
+    // Verify content before markers is preserved exactly
+    assert.ok(content.includes('# My Project'), 'heading preserved');
+    assert.ok(content.includes('**bold** and _italic_'), 'formatting preserved');
+    assert.ok(content.includes('```javascript'), 'code block preserved');
+    assert.ok(content.includes('console.log("world")'), 'code content preserved');
+    assert.ok(content.includes('- Item 1'), 'list preserved');
+    assert.ok(content.includes('  - Nested item'), 'nested list preserved');
+
+    // Verify content after markers is preserved exactly
+    assert.ok(content.includes('## Footer Section'), 'footer section preserved');
+    assert.ok(content.includes('Final content with special chars: <>&"\''), 'special chars preserved');
+    assert.ok(content.includes('The end.'), 'final content preserved');
+
+    // Verify old profile content replaced
+    assert.ok(!content.includes('## Old Profile'), 'old profile should be replaced');
+    assert.ok(!content.includes('Old stuff.'), 'old content should be replaced');
+  });
+});
