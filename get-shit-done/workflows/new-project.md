@@ -835,7 +835,101 @@ Success criteria:
 ---
 ```
 
-**If auto mode:** Skip approval gate — auto-approve and commit directly.
+### Consolidation Check
+
+Before presenting the approval gate, analyze the roadmap for over-segmentation. Read `.planning/ROADMAP.md` and `.planning/REQUIREMENTS.md` and apply these 6 heuristics in order:
+
+| # | Heuristic | Check | Flag when |
+|---|-----------|-------|-----------|
+| 1 | **Phase count vs depth ceiling** | Count phases. Read `depth` from `.planning/config.json`. | Phases exceed upper bound (quick: 5, standard: 8, comprehensive: 12) |
+| 2 | **Thin phases** | Count requirements mapped to each phase from REQUIREMENTS.md traceability. | Any phase has < 2 requirements |
+| 3 | **Duplicate requirements** | Compare requirement descriptions across phases. | Two requirements share >90% identical text |
+| 4 | **Integration smell** | Check phase names and goals for "integration", "wiring", "connecting". | Phase exists solely to wire features built in other phases |
+| 5 | **Documentation tail** | Check if a phase contains only docs/help/readme/changelog requirements. | Standalone docs phase that could fold into the final feature phase |
+| 6 | **Conceptual overlap** | Compare goals of adjacent phases. | Two phases describe the same pattern (e.g., both assemble context from templates) |
+
+Build a findings list. Each finding states: the heuristic triggered, the affected phases, and a specific consolidation recommendation (e.g., "Merge Phase 5 into Phase 4 — both assemble structured context").
+
+**If no findings:** Proceed to approval gate below unchanged.
+
+**If findings exist and auto mode:**
+
+Re-spawn roadmapper with consolidation instructions:
+```
+Task(prompt="
+<revision>
+Consolidation analysis found {N} issues:
+
+{findings list — one per line}
+
+Consolidation recommendations:
+{specific merge/eliminate/dedup instructions — one per line}
+
+Constraints:
+- Preserve 100% requirement coverage
+- Do not modify completed phases
+- Update ROADMAP.md, STATE.md, and REQUIREMENTS.md traceability
+
+Return ROADMAP REVISED with changes made.
+</revision>
+", subagent_type="gsd-roadmapper", model="{roadmapper_model}", description="Consolidate roadmap")
+```
+
+Auto-approve the revised result and commit directly.
+
+**If findings exist and interactive mode:**
+
+Present findings above the approval question:
+
+```
+### Consolidation Findings
+
+The roadmap has [N] potential issue(s):
+
+1. [Heuristic name]: [affected phases] — [recommendation]
+2. ...
+
+```
+
+Then use AskUserQuestion:
+- header: "Roadmap"
+- question: "The roadmap has consolidation findings. How would you like to proceed?"
+- options:
+  - "Consolidate (Recommended)" — Apply suggested merges, re-run roadmapper
+  - "Approve as-is" — Keep current structure
+  - "Adjust manually" — Tell me what to change
+  - "Review full file" — Show raw ROADMAP.md
+
+**If "Consolidate (Recommended)":**
+- Re-spawn roadmapper with consolidation revision context (same as auto mode prompt above)
+- Present revised roadmap inline
+- Re-run consolidation check on revised result
+- Loop until no findings remain or user approves
+
+**If "Approve as-is":** Continue to commit.
+
+**If "Adjust manually":**
+- Get user's adjustment notes
+- Re-spawn roadmapper with revision context:
+  ```
+  Task(prompt="
+  <revision>
+  User feedback on roadmap:
+  [user's notes]
+
+  Current ROADMAP.md: @.planning/ROADMAP.md
+
+  Update the roadmap based on feedback. Edit files in place.
+  Return ROADMAP REVISED with changes made.
+  </revision>
+  ", subagent_type="gsd-roadmapper", model="{roadmapper_model}", description="Revise roadmap")
+  ```
+- Present revised roadmap
+- Loop until user approves
+
+**If "Review full file":** Display raw `cat .planning/ROADMAP.md`, then re-ask.
+
+**If no findings (clean roadmap):**
 
 **CRITICAL: Ask for approval before committing (interactive mode only):**
 
@@ -947,6 +1041,10 @@ Present completion with next steps:
 - [ ] REQUIREMENTS.md created with REQ-IDs → **committed**
 - [ ] gsd-roadmapper spawned with context
 - [ ] Roadmap files written immediately (not draft)
+- [ ] Consolidation check applied after roadmap creation
+- [ ] Thin phases (< 2 requirements) flagged or merged
+- [ ] No duplicate requirements across phases
+- [ ] No standalone integration or documentation-only phases
 - [ ] User feedback incorporated (if any)
 - [ ] ROADMAP.md created with phases, requirement mappings, success criteria
 - [ ] STATE.md initialized

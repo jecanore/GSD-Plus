@@ -49,6 +49,7 @@ Recent decisions affecting current work:
 - 8 analysis dimensions covering patterns from 82-session manual analysis
 - CLAUDE.md template with `{{placeholder}}` markers for auto-generation
 - Phase brief assembly at plan-phase Step 7.5
+- Roadmap consolidation check added to /gsd:new-project Step 8 — 6 heuristics applied between roadmap creation and approval gate; re-spawns roadmapper for revision if issues found
 - Sort scan-sessions projects by lastActive descending (most recently used first)
 - Transparency note on stderr, not mixed with JSON output
 - Index-missing notification suppressed in --json mode

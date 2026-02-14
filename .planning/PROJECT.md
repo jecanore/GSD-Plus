@@ -80,6 +80,7 @@ Claude should know how a developer works so it doesn't start every conversation 
 | 8 analysis dimensions (communication, decision speed, explanation, debugging, UX, vendor, frustration, learning) | Covers the patterns discovered during manual 82-session analysis | — Pending |
 | CLAUDE.md template with `{{placeholder}}` markers | Enables auto-generation from project artifacts while allowing manual customization | — Pending |
 | Phase brief assembly at Step 7.5 of plan-phase (after research, before planner) | Research must complete before brief can include findings; planner needs brief for context | — Pending |
+| Roadmap consolidation check in /gsd:new-project Step 8 | Roadmapper can over-segment; 6 inline heuristics catch thin phases, duplicates, and integration smells before approval | — Pending |
 
 ---
 *Last updated: 2026-02-12 after initialization*
